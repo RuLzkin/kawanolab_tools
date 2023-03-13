@@ -22,9 +22,15 @@ class Daq970a():
         self.flag_scan_ready = False
 
     def refresh_resources(self):
+        """refresh_resources
+        Refresh Resource Manager
+        """
+
         self.res_man = pyvisa.ResourceManager()
         self.list_resources = self.res_man.list_resources()
-        # print(self.list_resources)
+        print("Devices which can be connected:")
+        for _res in self.list_resources:
+            print(" ----", _res)
 
     def find_device(self):
         num_suggest = None
@@ -43,6 +49,10 @@ class Daq970a():
         return num_suggest
 
     def connect_device(self, num=None):
+        """connect_device
+        num = index of resource list
+        if num is None, this class automatically searches proper device"""
+
         if self.res_man is None:
             raise ValueError("ResourceManager is undefined")
         if self.list_resources is None:
@@ -61,6 +71,15 @@ class Daq970a():
         self.device.write(arg)
 
     def set_channel_volt_dc(self, list_channel: list):
+        """set_channel_volt_dc
+        set channel(s) to measure dc volt
+
+        usage:
+        >> daq.set_channel_volt_dc([101])
+        or
+        >> daq.set_channel_volt_dc([101, 102, 103])
+        """
+
         self.list_channel = list_channel
         str_chan = ""
         for _chan in list_channel:
@@ -69,6 +88,15 @@ class Daq970a():
         self.write("ROUTE:SCAN (@{0})".format(str_chan[:-1]))
 
     def setup_scan(self, count=50, interval=0.1):
+        """setup_scan
+        count: number of measurement times
+        interval: measurement interval [sec]
+
+        example:
+            count=50, interval=0.1
+            => required time: about 5.0 sec
+
+        """
         self.scan_count = count
         self.scan_interval = interval
         self.write("FORMAT:READING:CHAN ON")
@@ -101,8 +129,23 @@ class Daq970a():
         return mat[:, 1], mat[:, 0]  # _t, _val
 
     def scan_multi_chan(self, verbose=False):
-        """scan_single_chan
-        return time: ndarray, val: ndarray"""
+        """scan_multi_chan
+        return list
+
+        usage:
+        >> daq.set_channel_volt_dc([101, 102, 103])
+        >> daq.setup_scan(count=50, interval=0.1)
+        >> ret = daq.scan_multi_chan()
+            ret[0]: (ndarray) measurement result of channnel 101
+
+            ret[0][:, 0]: times of channel 101 (length = 50) [time1, time2, ...]
+            ret[0][:, 1]: values of channel 101 (length = 50) [value1, value2, ...]
+
+            ret[1][:, 0]: times of channel 102 (length = 50) [time1, time2, ...]
+
+            ret[0][0, :]: channel=101, first measurement time and value [time, value]
+        """
+
         if not self.flag_scan_ready:
             return None, None
         self.write("INIT;:SYSTEM:TIME:SCAN?")
@@ -158,18 +201,14 @@ class Daq970a():
 
 
 if __name__ == "__main__":
-    from matplotlib import pyplot as plt
     daq = Daq970a()
 
-    print(daq.list_resources)
-    # print("*IDN?:", daq.query("*IDN?"))
-
-    list_channel = [_i for _i in range(102, 111)]
-
+    list_channel = [_i for _i in range(102, 111)]  # [101, 102, 103, ..., 110]
     daq.set_channel_volt_dc(list_channel)
-    daq.setup_scan(20, 0.1)
+    daq.setup_scan(20, 0.1)  # 20 counts, 0.1 [sec] interval
     ret = daq.scan_multi_chan()
 
+    from matplotlib import pyplot as plt
     plt.figure()
     for _i, _chan in enumerate(list_channel):
         plt.plot(ret[_i][:, 0], ret[_i][:, 1], label="{0}".format(_chan))
