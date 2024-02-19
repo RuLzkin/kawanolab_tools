@@ -1,8 +1,20 @@
-from time import time, sleep
+from time import time
 import datetime
 import numpy as np
 import pyvisa
 import keysight_ktdaq970
+
+
+def list_of_channels(str_chan: str):
+    list_num = str_chan.split(":")
+    if len(list_num) == 1:
+        return [int(list_num[0]), ]
+    if len(list_num) > 2:
+        raise ValueError
+    list_channel = []
+    for _i in range(int(list_num[0]), int(list_num[1]) + 1):
+        list_channel.append(_i)
+    return list_channel
 
 
 class Daq970a():
@@ -14,6 +26,7 @@ class Daq970a():
     time_scan = datetime.timedelta(1.0)
     max_range = 1000e-3
     resolution = 0.1e-3
+    nplc = 20
     str_chan = "101"
 
     def __init__(self, debug=False, verbose=True) -> None:
@@ -46,12 +59,12 @@ class Daq970a():
             except pyvisa.errors.VisaIOError:
                 _return = ""
                 if verbose:
-                    print("DAQ970Wrapper>>" + _res + ": Could not connect")
+                    print("DAQ970Wrapper>> " + _res + " : Could not connect")
             if "DAQ970A" in _return:
                 num_suggest = _i
                 # TODO priority: hislip > inst > gpib
                 if verbose:
-                    print("DAQ970Wrapper>>" + _res + ": DAQ970A Found")
+                    print("DAQ970Wrapper>> " + _res + " : DAQ970A Found")
                 break
         if num_suggest is None:
             raise FileNotFoundError("DAQ970Wrapper>> DAQ970A is not found")
@@ -73,7 +86,11 @@ class Daq970a():
 
         self.device = keysight_ktdaq970.KtDAQ970(resource_name, id_query, reset, options)
 
-    def configure(self, str_channel=None, sweep_count=None, sec_scan=None, max_range=None, resolution=None):
+    def configure(self, str_channel=None, sweep_count=None, sec_scan=None, max_range=None, resolution=None, nplc=None):
+        """configure
+
+            nplc: 0.02 | 0.2 | 1 | 2 | 10 | 20 | 100 | 200
+        """
         if self.debug:
             return
         if str_channel is not None:
@@ -82,13 +99,17 @@ class Daq970a():
             self.max_range = max_range
         if resolution is not None:
             self.resolution = resolution
+        if nplc is not None:
+            self.nplc = nplc
         # self.device.configure.dc_voltage.configure_auto(self.str_chan)
         self.device.configure.dc_voltage.configure(self.max_range, self.resolution, self.str_chan)
+        self.device.configure.dc_voltage.set_nplc(self.nplc, self.str_chan)
         self.device.scan.format.enable_all()
         if sweep_count is not None:
             self.device.scan.sweep_count = sweep_count
         if sec_scan is not None:
             self.time_scan = datetime.timedelta(sec_scan)
+        print("DAQ970Wrapper>> NPLC List>>", self.device.configure.dc_voltage.get_nplc(self.str_chan))
 
     def measure(self):
         """measure
@@ -98,13 +119,19 @@ class Daq970a():
         if self.debug:
             return 0, 0
         _scan = self.device.scan.read(self.time_scan)
-        list_measure = []
+        list_channel_set = list_of_channels(self.str_chan)
+        list_channel = [[] for _i in list_channel_set]
         for _mea in _scan:
-            list_measure.append(_mea.reading)
-        # print(list_measure)
-        _mean = np.mean(list_measure)
-        _std = np.std(list_measure)
-        return _mean, _std
+            _idx = list_channel_set.index(_mea.channel)
+            list_channel[_idx].append(_mea.reading)
+        list_mean = []
+        list_std = []
+        for _list in list_channel:
+            list_mean.append(np.mean(_list))
+            list_std.append(np.std(_list))
+        if len(list_mean) == 1:
+            return list_mean[0], list_std[0]
+        return list_mean, list_std
 
     def close(self):
         if self.device is not None:
