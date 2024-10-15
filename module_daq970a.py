@@ -1,4 +1,4 @@
-from time import time
+from time import time, sleep
 import datetime
 import numpy as np
 import pyvisa
@@ -25,7 +25,8 @@ class Daq970a():
     res_man = None
     time_scan = datetime.timedelta(1.0)
     max_range = 1000e-3
-    resolution = 0.1e-3
+    # resolution = 0.1e-3
+    resolution = 0.1e-6  # 20NPLC
     nplc = 20
     str_chan = "101"
 
@@ -88,8 +89,24 @@ class Daq970a():
 
     def configure(self, str_channel=None, sweep_count=None, sec_scan=None, max_range=None, resolution=None, nplc=None):
         """configure
-
+            max_range = 1000e-3
+            resolution = 0.1e-3
+            nplc = 20
+            str_chan = "101"
             nplc: 0.02 | 0.2 | 1 | 2 | 10 | 20 | 100 | 200
+
+            Integration Time Resolution	Digits Bits
+            0.02 PLC	<0.0001 x Range	4 1/2 Digits	15
+            0.2 PLC	<0.00001 x Range	5 1/2 Digits	18
+            1 PLC (Default)	<0.000003 x Range	5 1/2 Digits	20
+            2 PLC	<0.0000022 x Range	6 1/2 Digits	21
+            10 PLC	<0.000001 x Range	6 1/2 Digits	24
+            20 PLC	<0.0000008 x Range	6 1/2 Digits	25
+            100 PLC	<0.0000003 x Range	6 1/2 Digits	26
+            200 PLC	<0.00000022 x Range	6 1/2 Digits	26
+
+            Sets the measurement range in volts (0.1 | 1 | 10 | 100 | 300)
+            on the specified channelList or current scan list if parameter is empty.
         """
         if self.debug:
             return
@@ -109,7 +126,8 @@ class Daq970a():
             self.device.scan.sweep_count = sweep_count
         if sec_scan is not None:
             self.time_scan = datetime.timedelta(sec_scan)
-        print("DAQ970Wrapper>> NPLC List>>", self.device.configure.dc_voltage.get_nplc(self.str_chan))
+        if nplc is not None:
+            print("DAQ970Wrapper>> NPLC List>>", self.device.configure.dc_voltage.get_nplc(self.str_chan))
 
     def measure(self):
         """measure
@@ -145,32 +163,49 @@ def oscillo(nmax=100, str_chan="101"):
     from matplotlib import pyplot as plt
     global flag_continue
     global flag_autoscale
+    global flag_autoscale_0
 
     daq = Daq970a()
-    daq.configure(str_chan, 5, 1.0, 1000e-3, 0.1e-3)
+    daq.configure(str_chan, 1, 0.1, 1000e-3, 0.1e-3, 2)
 
     test = np.zeros(nmax)
     counts = - np.arange(nmax, 0, -1)
-    times = np.ones(nmax) * - 1e-3
+    # times = np.ones(nmax) * - 1e-3
+    times = np.ones(nmax) * np.nan
     # times = np.zeros(nmax)
 
     fig, ax = plt.subplots(1, 1, tight_layout=True)
     lines, = ax.plot(counts, test)
-    ax.set_ylabel("Voltage [mV]\n(autoscale once: y, continuous: a)")
+    ax.set_ylabel(
+        "Voltage [mV]\n(autoscale once: y, continuous: a or 0)\nAutoscale: Off")
     ax.set_xlabel("time [sec]")
     ax.grid(True)
 
     def pressed(event):
         global flag_continue
         global flag_autoscale
+        global flag_autoscale_0
         if event.key == "y":
+            flag_autoscale_0 = False
+            flag_autoscale = False
             ax.set_ylim(
                 test.min() - 0.1 * (test.max() - test.min()),
                 test.max() + 0.1 * (test.max() - test.min()))
+            ax.set_ylabel(
+                "Voltage [mV]\n(autoscale once: y, continuous: a or 0)\nAutoscale: Off")
+            return
+        if event.key == "0":
+            flag_autoscale_0 = True
+            flag_autoscale = False
+            ax.set_ylabel(
+                "Voltage [mV]\n(autoscale once: y, continuous: a or 0)\nAutoscale: On (Zero)")
             return
         if event.key == "a":
-            flag_autoscale = not flag_autoscale
-            print("Autoscale:", "On" if flag_autoscale else "Off")
+            flag_autoscale_0 = False
+            flag_autoscale = True
+            ax.set_ylabel(
+                "Voltage [mV]\n(autoscale once: y, continuous: a or 0)\nAutoscale: On")
+            return
         if event.key == "q":
             flag_continue = False
             return
@@ -179,6 +214,7 @@ def oscillo(nmax=100, str_chan="101"):
     start = time()
     flag_continue = True
     flag_autoscale = False
+    flag_autoscale_0 = False
     while flag_continue:
         times[0:-1] = times[1:]
         times[-1] = time() - start
@@ -189,7 +225,11 @@ def oscillo(nmax=100, str_chan="101"):
             ax.set_ylim(
                 test.min() - 0.1 * (test.max() - test.min()),
                 test.max() + 0.1 * (test.max() - test.min()))
-        ax.set_xlim(times[0], times[-1])
+        if flag_autoscale_0:
+            ax.set_ylim(
+                0,
+                test.max() * 1.1)
+        ax.set_xlim(np.nanmin(times), np.nanmax(times[-1]))
         plt.pause(0.001)
 
 
@@ -197,7 +237,7 @@ if __name__ == "__main__":
 
     """Basic Usage"""
     # daq = Daq970a()
-    # daq.configure("101", 100, 5.0, 1, 1.0e-3)
+    # daq.configure("101", 1, 0.1, 1000e-3, 0.1e-3, 2)
     # print(daq.measure())
 
     """App: Oscillo"""
