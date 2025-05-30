@@ -9,7 +9,7 @@ from tqdm import trange
 
 
 class CMMP01():
-    device: serial.Serial = None
+    device: Optional[serial.Serial] = None
     delay_measure = 0.11  # [sec]
 
     def __init__(self, str_port: Optional[str] = None) -> None:
@@ -28,6 +28,8 @@ class CMMP01():
         self.device = serial.Serial(str_port, 115200, timeout=1)
 
     def query(self, str_command: str):
+        if self.device is None:
+            raise ValueError("Device is not connected")
         self.device.write(str_command.encode() + b"\n")
         time.sleep(0.01)
         response = self.device.readline()
@@ -43,7 +45,7 @@ class CMMP01():
         self.delay_measure = 110 * _int * 1e-6
         return _int
 
-    def datatype(self, str_type: str = None):
+    def datatype(self, str_type: Optional[str] = None):
         if str_type is not None:
             _ret = self.query(f"DATA:Type {str_type}")
             if "OK" not in _ret:
@@ -171,18 +173,18 @@ def loop_measurement():
 if __name__ == "__main__":
 
     """normal use"""
-    sg = CMMP01("COM4")
-    _int = sg.interval()
-    print("DATATYPE:", sg.datatype("Voltage"), "[mV]")
-    print("Interval (Each pixel):", _int, "[usec]")
-    mat_data = sg.measure()
-    plt.figure()
-    plt.imshow(mat_data)
-    plt.colorbar()
-    plt.show()
+    # sg = CMMP01("COM4")
+    # _int = sg.interval()
+    # print("DATATYPE:", sg.datatype("Voltage"), "[mV]")
+    # print("Interval (Each pixel):", _int, "[usec]")
+    # mat_data = sg.measure()
+    # plt.figure()
+    # plt.imshow(mat_data)
+    # plt.colorbar()
+    # plt.show()
 
     """Real time preview"""
-    # realtime_preview()
+    realtime_preview()
 
     """Loop Measurement"""
     # loop_measurement()
