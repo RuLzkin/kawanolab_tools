@@ -1,9 +1,11 @@
 import re
 import warnings
+from typing import Optional, cast
 from time import sleep, time
 from typing import Union
 import numpy as np
 import pyvisa
+from pyvisa.resources import MessageBasedResource
 from tqdm.contrib import tenumerate
 
 
@@ -25,11 +27,11 @@ class KS34980A():
     """Keysight 34980A
     """
 
-    device = None
+    device: Optional[MessageBasedResource] = None
     list_resources = []
     res_man = None
 
-    def __init__(self, name: str = None) -> None:
+    def __init__(self, name: Optional[str] = None) -> None:
         self.refresh_resources()
         self.connect_device(name)
         self.write("SYST:BEEP:STAT OFF")
@@ -38,14 +40,14 @@ class KS34980A():
         self.res_man = pyvisa.ResourceManager()
         self.list_resources = self.res_man.list_resources()
 
-    def connect_device(self, name: str = None) -> None:
+    def connect_device(self, name: Optional[str] = None) -> None:
         if self.res_man is None:
             raise ValueError(MSG + "ResourceManager is undefined")
         if self.list_resources is None:
             raise ValueError(MSG + "Resource list is undefined")
 
         if name is not None:
-            self.device = self.res_man.open_resource(name)
+            self.device = cast(MessageBasedResource, self.res_man.open_resource(name))
             self.device.write("*RST")
             sleep(0.5)
             _ret_idn = self.query("*IDN?")
@@ -54,7 +56,9 @@ class KS34980A():
             pass
         # TODO automatically find and connect a device
 
-    def query(self, command: str, sec_sleep_after: float = None, verbose: bool = False) -> str:
+    def query(self, command: str, sec_sleep_after: Optional[float] = None, verbose: bool = False) -> str:
+        if self.device is None:
+            raise ValueError("Device is not connected")
         _ret = self.device.query(command)
         if sec_sleep_after is not None:
             sleep(sec_sleep_after)
@@ -63,15 +67,17 @@ class KS34980A():
         return _ret
 
     def write(self, command: str, verbose=False) -> None:
+        if self.device is None:
+            raise ValueError("Device is not connected")
         self.device.write(command)
         if verbose:
             print(MSG, "SCIP write:", command)
 
     def configure_volt_dc(
-            self, volt_range: Union[float, str] = None, resolution: Union[float, str] = None,
-            str_channel: str = None, nplc: Union[float, str] = None, tup_trig_tim_cnt: tuple[float, float] = None,
-            ms_timeout: Union[float, str] = None, verbose: bool = False
-    ) -> tuple[list[float], list[float], str, float, float]:
+            self, volt_range: Union[float, str, None] = None, resolution: Union[float, str, None] = None,
+            str_channel: Optional[str] = None, nplc: Union[float, str, None] = None, tup_trig_tim_cnt: Optional[tuple[float, float]] = None,
+            ms_timeout: Union[float, str, None] = None, verbose: bool = False
+    ) -> tuple[list[str], list[float], str, float, float]:
         """configure volt DC mode
         Input Args.
             volt_range: 0.1 ~ 10 | "AUTO" | "MIN" | "MAX" | "DEF"
@@ -104,6 +110,8 @@ class KS34980A():
             as it seems easier to use if the channel is in the list first.
         """
 
+        if self.device is None:
+            raise ValueError("Device is not connected")
         # ALL CHANNEL DISABLED
         self.write("ROUT:OPEN:ALL")
         # SELECTED CHANNEL ENABLED
@@ -140,8 +148,14 @@ class KS34980A():
         # TIMEOUT SET
         if ms_timeout is not None:
             # NPLC setting is here to implement AUTO MODE
-            _max_time = np.max(list_nplc) / 50 * 50
-            self.device.timeout = 1e3 * (_tirg_tim + _max_time + 3) * _trig_cnt if ms_timeout == "AUTO" else ms_timeout
+            _max_time: float = np.max(list_nplc) / 50 * 50
+            if ms_timeout == "AUTO":
+                self.device.timeout = 1e3 * (_tirg_tim + _max_time + 3) * _trig_cnt
+            elif type(ms_timeout) is str:
+                raise ValueError(f"{ms_timeout} is not float value or 'AUTO'")
+            else:
+                self.device.timeout = float(ms_timeout)
+            # self.device.timeout = 1e3 * (_tirg_tim + _max_time + 3) * _trig_cnt if ms_timeout == "AUTO" else ms_timeout
             # Regarding to some experiments, Trigger counts doesn't take much time.
             # Furthermore, measurement time is less than 500ms without outliers(up to 80 channels).
         # VERBOSE
@@ -159,7 +173,7 @@ class KS34980A():
                 "Please increase the timeout value or set ms_timeout='AUTO'.")
         return list_conf, list_nplc, _trig_src, _tirg_tim, _trig_cnt
 
-    def nplc(self, value: float = None, str_channel: str = None):
+    def nplc(self, value: Union[float, str, None] = None, str_channel: Optional[str] = None):
         """nplc setter and getter
         ks34980a.nplc(0.2)
         ks34980a.nplc(0.2, "1001:1010")
