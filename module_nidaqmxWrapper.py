@@ -1,7 +1,7 @@
 import numpy as np
 import nidaqmx
 
-system = nidaqmx.system.System.local()
+system = nidaqmx.system.System.local()  # type:ignore
 print(system.driver_version)
 print("Devices:")
 if len(system.devices) == 0:

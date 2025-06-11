@@ -7,7 +7,7 @@ import nidaqmx
 # import datetime
 import matplotlib.pyplot as plt
 
-from module_SynthWrapper import Synth_Wrapper, Synth_Dummy
+from module_SynthWrapper import Synth_Wrapper
 from module_shot304gs import Shot304gs, Shot_304gs_dummy
 # import pandas as pd
 # import glob
@@ -18,7 +18,7 @@ SEC_TIMEOUT = 1000
 windll.winmm.timeBeginPeriod(1)
 LIST_PORTS = list(serial.tools.list_ports.comports())
 
-system = nidaqmx.system.System.local()
+system = nidaqmx.system.System.local()  # type:ignore
 print(system.driver_version)
 print("Devices:")
 if len(system.devices) == 0:
@@ -46,7 +46,7 @@ for p in LIST_PORTS:
 def main_3d(filepath, freq_start, freq_end, freq_tick, dim_step, height_start, height_end, height_tick, number_of_samples, pulse_origin, is_dummy=False):
 
     if is_dummy:
-        synth = Synth_Dummy()
+        synth = Synth_Wrapper(debug=True)
         shot304 = Shot_304gs_dummy()
     else:
         # synth = Synth_Dummy()

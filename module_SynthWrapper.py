@@ -1,10 +1,11 @@
 import time
+from typing import Optional
 import serial.tools.list_ports
 from windfreak import SynthHD
 
 
 class Synth_Wrapper():
-    def __init__(self, str_port: str = None, num_port: int = None, debug=False) -> None:
+    def __init__(self, str_port: Optional[str] = None, num_port: Optional[int] = None, debug=False) -> None:
         """Synth_Wrapper(str_port: str = None, num_port: int = 0, debug=False)
 
         input:
@@ -35,6 +36,8 @@ class Synth_Wrapper():
                         _synth.close()
                         num_port = _i
                         break
+            if num_port is None:
+                raise ValueError("Device not found")
             str_port = list_port[num_port].name
         self.synth = SynthHD(str_port)
         self.synth[0].enable = False
@@ -42,7 +45,7 @@ class Synth_Wrapper():
         self.synth[0].frequency = 8.0e9
         print("SynthHDWrapper>> Connect to", str_port)
 
-    def on(self, power: float = None, frequency: float = None):
+    def on(self, power: Optional[float] = None, frequency: Optional[float] = None):
         """on(power: float | None, frequency: float | None)
 
         input:

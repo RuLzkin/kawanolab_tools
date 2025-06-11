@@ -2,6 +2,8 @@ from time import time, sleep
 import datetime
 import numpy as np
 import pyvisa
+from pyvisa.resources import MessageBasedResource
+from typing import cast
 import keysight_ktdaq970
 
 
@@ -20,7 +22,7 @@ def list_of_channels(str_chan: str):
 class Daq970a():
     """DAQ970A
     """
-    device: keysight_ktdaq970.KtDAQ970 = None
+    device: keysight_ktdaq970.KtDAQ970 = None  # type:ignore
     list_resources = []
     res_man = None
     time_scan = datetime.timedelta(1.0)
@@ -47,6 +49,8 @@ class Daq970a():
         self.list_resources = self.res_man.list_resources()
 
     def find_device(self, verbose=True):
+        if self.res_man is None:
+            raise ValueError("Resource Manager is not initialized")
         num_suggest = None
         for _i, _res in enumerate(self.list_resources):
             try:
@@ -54,7 +58,7 @@ class Daq970a():
                     # I have no idea that the ip address exists.
                     # 31325 is 192.168.10.xxx...
                     raise pyvisa.errors.VisaIOError(0)
-                _dev = self.res_man.open_resource(_res)
+                _dev = cast(MessageBasedResource, self.res_man.open_resource(_res))
                 _return = _dev.query("*IDN?")
                 _dev.close()
             except pyvisa.errors.VisaIOError:
@@ -85,7 +89,7 @@ class Daq970a():
         reset = True
         options = ""
 
-        self.device = keysight_ktdaq970.KtDAQ970(resource_name, id_query, reset, options)
+        self.device = keysight_ktdaq970.KtDAQ970(resource_name, id_query, reset, options)  # type:ignore
 
     def configure(self, str_channel=None, sweep_count=None, sec_scan=None, max_range=None, resolution=None, nplc=None):
         """configure

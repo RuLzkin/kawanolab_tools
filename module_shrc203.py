@@ -2,6 +2,9 @@ import time
 from typing import Optional
 import numpy as np
 import pyvisa
+from pyvisa.resources import MessageBasedResource
+from typing import cast
+
 
 """
 A: コマンドで指定したらG:したほうがいい
@@ -15,7 +18,7 @@ class Shrc203():
         self.debug = debug
         if debug:
             return
-        self.device: Optional[pyvisa.resources.Resource] = None
+        self.device: Optional[MessageBasedResource] = None
         self.res_man = pyvisa.ResourceManager()
         num_device_suggest = None
 
@@ -32,7 +35,7 @@ class Shrc203():
                 print(" -- DAQ970A")
                 continue
             try:
-                _inst = self.res_man.open_resource(_res)
+                _inst = cast(MessageBasedResource, self.res_man.open_resource(_res))
                 if _inst is None:
                     print(_res + "can not be opend")
                     continue
@@ -60,12 +63,14 @@ class Shrc203():
         return self.device is not None
 
     def setup(self, num_device):
-        self.device = self.res_man.open_resource(
+        self.device = cast(MessageBasedResource, self.res_man.open_resource(
             self.res_man.list_resources()[num_device]
-        )
+        ))
         self.wait()
 
     def move_abs(self, list_pulse, show=False):
+        if self.device is None:
+            raise ValueError("Device is not connected")
         if self.debug:
             time.sleep(0.1)
             return
@@ -78,8 +83,8 @@ class Shrc203():
     def wait(self, show=False):
         if self.debug:
             return
-        if not self._exist_device():
-            return None
+        if self.device is None:
+            raise ValueError("Device is not connected")
         if show:
             print("")
         while "B" in self.device.query("!:"):
@@ -110,8 +115,8 @@ class Shrc203():
                 " " * 20)
 
     def status(self):
-        if not self._exist_device():
-            return None
+        if self.device is None:
+            raise ValueError("Device is not connected")
         str_ret = self.device.query("Q:Su")
         for old in ("\x00", "\r", "\n", " ", "U"):
             str_ret = str_ret.replace(old, "")
@@ -121,20 +126,20 @@ class Shrc203():
         return list_pulse, list_status[3:]
 
     def Version(self):
-        if not self._exist_device():
-            return None
+        if self.device is None:
+            raise ValueError("Device is not connected")
         return self.device.query("?:V")
 
     def CurrentAbsolutePulseValue(self):
-        if not self._exist_device():
-            return None
+        if self.device is None:
+            raise ValueError("Device is not connected")
         str_ret = self.device.query("?:AW")
         list_ret = np.array(str_ret.split(","), dtype=int).tolist()
         return list_ret
 
     def TravelPerPulse(self):
-        if not self._exist_device():
-            return None
+        if self.device is None:
+            raise ValueError("Device is not connected")
         str_ret = self.device.query("?:PW")
         for old in ("\x00", "\r", "\n", " "):
             str_ret = str_ret.replace(old, "")
@@ -142,8 +147,8 @@ class Shrc203():
         return list_ret
 
     def NumberOfDivisions(self):
-        if not self._exist_device():
-            return None
+        if self.device is None:
+            raise ValueError("Device is not connected")
         str_ret = self.device.query("?:SW")
         for old in ("\x00", "\r", "\n", " "):
             str_ret = str_ret.replace(old, "")
@@ -151,8 +156,8 @@ class Shrc203():
         return arr_ret
 
     def set_NumberOfDivisions(self, list_nod: list = [2, 2, 2, 2]):
-        if not self._exist_device():
-            return None
+        if self.device is None:
+            raise ValueError("Device is not connected")
         for _i, _num in enumerate(list_nod):
             self.device.query("S:{0}{1}".format(_i + 1, _num))
         self.wait()
@@ -160,6 +165,8 @@ class Shrc203():
     def homeposition(self, show=False):
         if self.debug:
             return
+        if self.device is None:
+            raise ValueError("Device is not connected")
         self.device.query("H:W")
         self.wait(show)
 
