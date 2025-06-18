@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# !/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 import sys
@@ -26,7 +26,8 @@ class FrequencyWavelengthConverter(QMainWindow):
 
     def initUI(self):
         self.setWindowTitle('周波数・波長・波数変換器')
-        self.setFixedSize(550, 500)
+        # self.setFixedSize(550, 500)
+        self.setFixedSize(350, 320)
 
         # メインウィジェット
         main_widget = QWidget()
