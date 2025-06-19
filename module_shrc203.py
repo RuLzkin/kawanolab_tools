@@ -24,16 +24,14 @@ class Shrc203():
 
         for _ind, _res in enumerate(self.res_man.list_resources()):
             print("SHRC203Wrapper>> Resource Manager>>", _res, end="", flush=True)
-            # Q:コマンド等を使ってSHOT304であることを確認するほうが良い
+            # Q:コマンド等を使ってSHRC203であることを確認するほうが良い
             # if "ASRL" not in _res and "TCPIP" not in _res and "USB" not in _res and "GPIB" not in _res:
             #     print(" -- not via ASRL or not via TCPIP")
             #     continue
-            if "192.168.11." in _res:
-                print(" -- Other segment")
-                continue
-            if "192.168.10.203" in _res:
-                print(" -- DAQ970A")
-                continue
+            # _inst = self.res_man.open_resource(_res)
+            # if _inst is None:
+            #     print(_res + "can not be opend")
+            #     continue
             try:
                 _inst = cast(MessageBasedResource, self.res_man.open_resource(_res))
                 if _inst is None:
@@ -68,14 +66,26 @@ class Shrc203():
         ))
         self.wait()
 
-    def move_abs(self, list_pulse, show=False):
+    def move_abs(self, list_pulse, list_unit=["U", "U", "U"], show=False, show_cmd=False):
         if self.device is None:
             raise ValueError("Device is not connected")
         if self.debug:
             time.sleep(0.1)
             return
+
+        for _i in range(3):
+            if list_unit[_i] == "D":
+                list_pulse[_i] = list_pulse[_i] / 360 * 289
+
+        list_sign = ["+", "+", "+"]
+        for _i in range(len(list_pulse)):
+            if list_pulse[_i] < 0:
+                list_sign[_i] = "-"
+                list_pulse[_i] *= -1
         self.wait(show=False)
-        str_command = "A:W+U{0[0]:.0f}+U{0[1]:.0f}+U{0[2]:.0f}".format(list_pulse)
+        str_command = "A:W{0[0]}{1[0]}{2[0]:.2f}{0[1]}{1[1]}{2[1]:.2f}{0[2]}{1[2]}{2[2]:.2f}".format(list_sign, list_unit, list_pulse)
+        if show_cmd:
+            print(str_command)
         self.device.query(str_command)
         self.device.query("G:")
         self.wait(show)
@@ -95,7 +105,7 @@ class Shrc203():
                     _msg = _msg.replace(_cut, "")
                 list_status = _msg.split(",")
                 print(
-                    "\r>> current position:",
+                    "\rSHRC203Wrapper>> current position:",
                     list_status[0][1:], "um,",
                     list_status[1][1:], "um,",
                     list_status[2][1:], "um",
@@ -108,7 +118,7 @@ class Shrc203():
                 _msg = _msg.replace(_cut, "")
             list_status = _msg.split(",")
             print(
-                "\r>> current position:",
+                "\rSHRC203Wrapper>> current position:",
                 list_status[0][1:], "um,",
                 list_status[1][1:], "um,",
                 list_status[2][1:], "um",
@@ -170,6 +180,16 @@ class Shrc203():
         self.device.query("H:W")
         self.wait(show)
 
+    def set_memory_switch(self):
+        if self.device is None:
+            raise ValueError("Device is not connected")
+        self.device.query("MS:ON")
+        self.device.query("MS:SET,6,9,2000")
+        self.device.query("MS:SET,6,12,2000")
+        self.device.query("MS:SET,6,15,2000")
+        self.device.query("MS:OFF")
+        self.wait()
+
 
 class Shrc203_dummy():
     def __init__(self, num_device=None) -> None:
@@ -205,5 +225,6 @@ class Shrc203_dummy():
 
 if __name__ == "__main__":
     shrc203 = Shrc203()
+    # shrc203.set_memory_switch()
     shrc203.homeposition(show=True)
-    shrc203.move_abs([50e3, 50e3, 50e3], show=True)
+    shrc203.move_abs([50e3, 50e3, 50e3], show=True, show_cmd=True)
