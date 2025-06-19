@@ -1,9 +1,9 @@
-from time import time, sleep
+from time import time
 import datetime
 import numpy as np
 import pyvisa
 from pyvisa.resources import MessageBasedResource
-from typing import cast
+from typing import cast, Optional
 import keysight_ktdaq970
 
 
@@ -31,6 +31,8 @@ class Daq970a():
     resolution = 0.1e-6  # 20NPLC
     nplc = 20
     str_chan = "101"
+    str_chan_lamp_switch = "204"
+    str_chan_lamp_level = "205"
 
     def __init__(self, debug=False, verbose=True) -> None:
         self.debug = debug
@@ -141,6 +143,8 @@ class Daq970a():
         if self.debug:
             return 0, 0
         _scan = self.device.scan.read(self.time_scan)
+        if len(_scan) == 1:
+            return _scan[0].reading, 0
         list_channel_set = list_of_channels(self.str_chan)
         list_channel = [[] for _i in list_channel_set]
         for _mea in _scan:
@@ -155,7 +159,32 @@ class Daq970a():
             return list_mean[0], list_std[0]
         return list_mean, list_std
 
+    def lamp_configure(self, str_chan_lamp_switch, str_chan_lamp_level):
+        self.str_chan_lamp_switch = str_chan_lamp_switch
+        self.str_chan_lamp_level = str_chan_lamp_level
+
+    def lamp_switch(self, is_on: Optional[bool] = None):
+        if self.device is None:
+            return
+        if is_on is None:
+            return self.device.configure.digital.get_dac_voltage(self.str_chan_lamp_switch)[0] < 1.0
+        _voltage = 0.0 if is_on else 5.0
+        self.device.configure.digital.set_dac_voltage(_voltage, self.str_chan_lamp_switch)
+
+    def lamp_level(self, voltage: Optional[float] = None):
+        if self.device is None:
+            return
+        if voltage is None:
+            return self.device.configure.digital.get_dac_voltage(self.str_chan_lamp_level)[0]
+        if voltage > 5.0:
+            raise ValueError("Input Voltage is too high. Please set the voltage between 0V and 5V")
+        if voltage < 0.0:
+            raise ValueError("Input Voltage is too low. Please set the voltage between 0V and 5V")
+        self.device.configure.digital.set_dac_voltage(voltage, self.str_chan_lamp_level)
+
     def close(self):
+        self.lamp_level(0.0)
+        self.lamp_switch(False)
         if self.device is not None:
             self.device.close()
 
@@ -163,14 +192,14 @@ class Daq970a():
         self.close()
 
 
-def oscillo(nmax=100, str_chan="101"):
+def oscillo(nmax=100, str_chan="101", nplc=2):
     from matplotlib import pyplot as plt
     global flag_continue
     global flag_autoscale
     global flag_autoscale_0
 
     daq = Daq970a()
-    daq.configure(str_chan, 1, 0.1, 1000e-3, 0.1e-3, 2)
+    daq.configure(str_chan, 1, 0.1, 1000e-3, 0.1e-3, nplc)
 
     test = np.zeros(nmax)
     counts = - np.arange(nmax, 0, -1)
