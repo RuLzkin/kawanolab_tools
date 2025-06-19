@@ -240,7 +240,7 @@ def test_elapsed_time():
             mat_etime[_i, _j] = time() - start
     _dchan = (num_channels[1] - num_channels[0]) / 2
     _dcnt = (num_counts[1] - num_counts[0]) / 2
-    _extent = [num_channels[0] - _dchan, num_channels[-1] + _dchan, num_counts[-1] + _dcnt, num_counts[0] - _dcnt]
+    _extent = (num_channels[0] - _dchan, num_channels[-1] + _dchan, num_counts[-1] + _dcnt, num_counts[0] - _dcnt)
     plt.figure()
     plt.imshow(mat_etime, extent=_extent, aspect=len(num_channels) / len(num_counts))
     plt.xlabel("Number of Channels")
