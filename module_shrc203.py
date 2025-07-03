@@ -14,17 +14,20 @@ G:しないと?:Aで得られる情報と実際の位置が一致しなくなる
 
 
 class Shrc203():
+    DEGREES_TO_PULSE_RATIO = 289 / 360
+
     def __init__(self, num_device=None, debug=False) -> None:
         self.debug = debug
-        if debug:
-            return
-        self.device: Optional[MessageBasedResource] = None
+        self._device: Optional[MessageBasedResource] = None
         self.res_man = pyvisa.ResourceManager()
         num_device_suggest = None
 
+        if debug:
+            return
+
         for _ind, _res in enumerate(self.res_man.list_resources()):
             print("SHRC203Wrapper>> Resource Manager>>", _res, end="", flush=True)
-            # Q:コマンド等を使ってSHRC203であることを確認するほうが良い
+            # TODO: Q:コマンド等を使ってSHRC203であることを確認するほうが良い
             # if "ASRL" not in _res and "TCPIP" not in _res and "USB" not in _res and "GPIB" not in _res:
             #     print(" -- not via ASRL or not via TCPIP")
             #     continue
@@ -32,50 +35,87 @@ class Shrc203():
             # if _inst is None:
             #     print(_res + "can not be opend")
             #     continue
+
             try:
-                _inst = cast(MessageBasedResource, self.res_man.open_resource(_res))
-                if _inst is None:
-                    print(_res + "can not be opend")
-                    continue
-                _idn = _inst.query("*IDN?")
-                _inst.close()
+                with cast(MessageBasedResource, self.res_man.open_resource(_res)) as _inst:
+                    _idn = _inst.query("*IDN?")
+                    if "SHRC-203" in _idn:
+                        num_device_suggest = _ind
+                        print(" -- Found SHRC-203")
+                        break
             except pyvisa.errors.VisaIOError as e:
-                print(" --", e)
+                print(f" -- Failed to connect: {e}")
                 continue
-            if "SHRC-203" in _idn:
-                num_device_suggest = _ind
-                print(" -- Found SHRC-203")
-                break
-            else:
-                print(" -- Other device")
-
-        if num_device is not None:
-            self.setup(num_device)
-        if num_device_suggest is not None:
-            self.setup(num_device_suggest)
-
-        if num_device is None and num_device_suggest is None:
+            except Exception as e:
+                print(f" -- Unexpected error with: {e}")
+                continue
+            print(" -- Other device")
+        target_device = num_device if num_device is not None else num_device_suggest
+        if target_device is not None:
+            self.setup(target_device)
+        else:
             raise ValueError("Could not find SHRC-203")
+
+    def __del__(self):
+        self._cleanup()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._cleanup()
+        # 例外を再発生させる場合はFalseを返す
+        return False
+
+    def _cleanup(self):
+        """リソースをクリーンアップ"""
+        if hasattr(self, '_device') and self._device:
+            try:
+                self._device.close()
+            except Exception:
+                pass
+            self._device = None
+
+        if hasattr(self, 'res_man') and self.res_man:
+            try:
+                self.res_man.close()
+            except Exception:
+                pass
+            self.res_man = None
+
+    @property
+    def device(self) -> MessageBasedResource:
+        if self._device is None:
+            raise ValueError("Device is not connected")
+        return self._device
+
+    @property
+    def is_connected(self) -> bool:
+        return self._device is not None
 
     def _exist_device(self):
         return self.device is not None
 
     def setup(self, num_device):
-        self.device = cast(MessageBasedResource, self.res_man.open_resource(
+        if self.res_man is None:
+            raise ValueError("ReourceManager does not exist")
+        self._device = cast(MessageBasedResource, self.res_man.open_resource(
             self.res_man.list_resources()[num_device]
         ))
         self.wait()
 
+    def close(self):
+        """明示的にリソースを閉じる"""
+        self._cleanup()
+
     def move_abs(self, list_pulse, list_unit=["U", "U", "U"], show=False, show_cmd=False):
-        if self.device is None:
-            raise ValueError("Device is not connected")
         if self.debug:
             time.sleep(0.1)
             return
 
         for _i in range(3):
             if list_unit[_i] == "D":
-                list_pulse[_i] = list_pulse[_i] / 360 * 289
+                list_pulse[_i] = list_pulse[_i] * self.DEGREES_TO_PULSE_RATIO
 
         list_sign = ["+", "+", "+"]
         for _i in range(len(list_pulse)):
@@ -93,8 +133,6 @@ class Shrc203():
     def wait(self, show=False):
         if self.debug:
             return
-        if self.device is None:
-            raise ValueError("Device is not connected")
         if show:
             print("")
         while "B" in self.device.query("!:"):
@@ -124,50 +162,41 @@ class Shrc203():
                 list_status[2][1:], "um",
                 " " * 20)
 
+    def _clean_response(self, response: str) -> str:
+        """レスポンス文字列をクリーンアップ"""
+        for char in ("\x00", "\r", "\n", " "):
+            response = response.replace(char, "")
+        return response
+
     def status(self):
-        if self.device is None:
-            raise ValueError("Device is not connected")
         str_ret = self.device.query("Q:Su")
-        for old in ("\x00", "\r", "\n", " ", "U"):
-            str_ret = str_ret.replace(old, "")
+        str_ret = self._clean_response(str_ret).replace("U", "")
         list_status = str_ret.split(",")
-        list_pulse = np.array(list_status[:3], dtype=int).tolist()
+        list_pulse = [int(x) for x in list_status[:3]]
         self.wait()
         return list_pulse, list_status[3:]
 
     def Version(self):
-        if self.device is None:
-            raise ValueError("Device is not connected")
         return self.device.query("?:V")
 
     def CurrentAbsolutePulseValue(self):
-        if self.device is None:
-            raise ValueError("Device is not connected")
         str_ret = self.device.query("?:AW")
         list_ret = np.array(str_ret.split(","), dtype=int).tolist()
         return list_ret
 
     def TravelPerPulse(self):
-        if self.device is None:
-            raise ValueError("Device is not connected")
         str_ret = self.device.query("?:PW")
-        for old in ("\x00", "\r", "\n", " "):
-            str_ret = str_ret.replace(old, "")
+        str_ret = self._clean_response(str_ret)
         list_ret = np.array(str_ret.split(","), dtype=float).tolist()
         return list_ret
 
     def NumberOfDivisions(self):
-        if self.device is None:
-            raise ValueError("Device is not connected")
         str_ret = self.device.query("?:SW")
-        for old in ("\x00", "\r", "\n", " "):
-            str_ret = str_ret.replace(old, "")
+        str_ret = self._clean_response(str_ret)
         arr_ret = np.array(str_ret.split(","), dtype=float).tolist()
         return arr_ret
 
     def set_NumberOfDivisions(self, list_nod: list = [2, 2, 2, 2]):
-        if self.device is None:
-            raise ValueError("Device is not connected")
         for _i, _num in enumerate(list_nod):
             self.device.query("S:{0}{1}".format(_i + 1, _num))
         self.wait()
@@ -175,14 +204,10 @@ class Shrc203():
     def homeposition(self, show=False):
         if self.debug:
             return
-        if self.device is None:
-            raise ValueError("Device is not connected")
         self.device.query("H:W")
         self.wait(show)
 
     def set_memory_switch(self):
-        if self.device is None:
-            raise ValueError("Device is not connected")
         self.device.query("MS:ON")
         self.device.query("MS:SET,6,9,2000")
         self.device.query("MS:SET,6,12,2000")
