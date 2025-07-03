@@ -24,16 +24,33 @@ class CMMP01():
         self.frame_count = 0  # for loop measure
         self.max_frames = 10000
 
+    def __del__(self):
+        self.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def connect(self, str_port: str):
         self.device = serial.Serial(str_port, 115200, timeout=1)
 
-    def query(self, str_command: str):
+    def query(self, str_command: str, timeout: float = 1.0):
         if self.device is None:
             raise ValueError("Device is not connected")
-        self.device.write(str_command.encode() + b"\n")
-        time.sleep(0.01)
-        response = self.device.readline()
-        return response.decode().rstrip()
+        try:
+            self.device.write(str_command.encode() + b"\n")
+            time.sleep(0.01)
+            start_time = time.time()
+            while self.device.in_waiting == 0:
+                if time.time() - start_time > timeout:
+                    raise TimeoutError(f"Query timeout: {str_command}")
+                time.sleep(0.001)
+            response = self.device.readline()
+            return response.decode().rstrip()
+        except serial.SerialException as e:
+            raise RuntimeError(f"Serial communication error: {e}")
 
     def close(self):
         if self.device is not None:
@@ -54,13 +71,19 @@ class CMMP01():
         return _dt
 
     def measure(self):
-        self.query("MEAS")
-        time.sleep(self.delay_measure)
-        _dat = self.query("DATA?")
-        dat = np.array([float(x) for x in _dat[1:-1].split(",")])
-        return dat.reshape((10, 10))
+        try:
+            self.query("MEAS")
+            time.sleep(self.delay_measure)
+            _dat = self.query("DATA?")
+            dat = np.array([float(x) for x in _dat[1:-1].split(",")])
+            return dat.reshape((10, 10))
+        except (ValueError, IndexError) as e:
+            raise RuntimeError(f"Measurement failed: {e}")
 
     def start_measure_loop(self):
+        self.raw_data_list.clear()
+        self.timestamps.clear()
+        self.frame_count = 0
         input("Press Enter key to start measurement")
 
         self.measuring = True
@@ -75,6 +98,9 @@ class CMMP01():
         if self.measurement_thread:
             self.measurement_thread.join()
 
+        if hasattr(self, 'keyboard_thread'):
+            self.keyboard_thread.join(timeout=1.0)
+
         return self.process_raw_data()
 
     def measure_loop(self):
@@ -87,22 +113,28 @@ class CMMP01():
         status_interval = 1.0
 
         while self.measuring:
-            current_time = time.time() - self.start_time
+            try:
+                current_time = time.time() - self.start_time
 
-            self.query("MEAS")
-            time.sleep(self.delay_measure)
-            raw_data = self.query("DATA?")
+                self.query("MEAS")
+                time.sleep(self.delay_measure)
+                raw_data = self.query("DATA?")
 
-            self.raw_data_list.append(raw_data)
-            self.timestamps.append(current_time)
-            self.frame_count += 1
+                self.raw_data_list.append(raw_data)
+                self.timestamps.append(current_time)
+                self.frame_count += 1
 
-            if time.time() - last_status_time > status_interval:
-                print(f"Measuring... Frame: {self.frame_count}, elapsed time: {current_time:.2f} [sec]", end="\r")
-                last_status_time = time.time()
+                if time.time() - last_status_time > status_interval:
+                    print(f"Measuring... Frame: {self.frame_count}, elapsed time: {current_time:.2f} [sec]", end="\r")
+                    last_status_time = time.time()
 
-            if self.frame_count >= self.max_frames:
-                print(f"Reached maximum frames {self.max_frames}. Measurement stopped")
+                if self.frame_count >= self.max_frames:
+                    print(f"Reached maximum frames {self.max_frames}. Measurement stopped")
+                    self.measuring = False
+                    break
+
+            except Exception as e:
+                print(f"\nMeasurement error: {e}")
                 self.measuring = False
                 break
 
@@ -111,7 +143,7 @@ class CMMP01():
         self.measuring = False
         print("\nMeasurement stopped")
 
-    def process_raw_data(self):
+    def process_raw_data(self) -> tuple[np.ndarray, np.ndarray]:
         frame_count = len(self.raw_data_list)
         data = np.zeros((10, 10, frame_count))
 
@@ -122,34 +154,45 @@ class CMMP01():
         return np.array(self.timestamps), data
 
 
+class RealtimePreview:
+    def __init__(self, cmmp_device):
+        self.cmmp = cmmp_device
+        self.cbar = None
+
+    def start_preview(self):
+        _int = self.cmmp.interval()
+        print("DATATYPE:", self.cmmp.datatype("Voltage"), "[mV]")
+        print("Interval:", _int, "[usec]")
+
+        mat_data = self.cmmp.measure()
+        self.fig, self.ax = plt.subplots(figsize=(6, 9))
+        plt.tight_layout()
+
+        self.im = self.ax.imshow(mat_data, cmap="viridis", interpolation="nearest", aspect=2.0)
+        self.cbar = self.fig.colorbar(self.im, ax=self.ax)
+        self.ax.set_title("Realtime measurement")
+
+        def update(frame):
+            try:
+                mat_data = self.cmmp.measure()
+                self.im.set_array(mat_data)
+                self.im.set_clim(mat_data.min(), mat_data.max())
+                if self.cbar:
+                    self.cbar.remove()
+                self.cbar = self.fig.colorbar(self.im, ax=self.ax)
+                return [self.im]
+            except Exception as e:
+                print(f"Preview update error: {e}")
+                return [self.im]
+
+        _ = FuncAnimation(self.fig, update, interval=_int * 0.2, blit=False)
+        plt.show()
+
+
 def realtime_preview():
-    global cbar
     cmmp = CMMP01("COM4")
-
-    _int = cmmp.interval()
-    print("DATATYPE:", cmmp.datatype("Voltage"), "[mV]")
-    print("Interval:", _int, "[usec]")
-
-    mat_data = cmmp.measure()
-
-    fig, ax = plt.subplots(figsize=(6, 9))
-    plt.tight_layout()
-
-    im = ax.imshow(mat_data, cmap="viridis", interpolation="nearest", aspect=2.0)
-    cbar = fig.colorbar(im, ax=ax)
-    ax.set_title("Realtime measurement")
-
-    def update(frame):
-        global cbar
-        mat_data = cmmp.measure()
-        im.set_array(mat_data)
-        im.set_clim(mat_data.min(), mat_data.max())
-        cbar.remove()
-        cbar = fig.colorbar(im, ax=ax)
-        return [im]
-
-    _ = FuncAnimation(fig, update, interval=_int * 0.2, blit=False)
-    plt.show()
+    preview = RealtimePreview(cmmp)
+    preview.start_preview()
 
 
 def loop_measurement():
