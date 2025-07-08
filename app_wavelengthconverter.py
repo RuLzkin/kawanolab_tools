@@ -16,6 +16,12 @@ class FrequencyWavelengthConverter(QMainWindow):
         self.debug = debug
         self.c0 = 299792458  # 真空中の光速 [m/s]
         self.updating = False  # 更新中フラグ（無限ループ防止）
+
+        # 内部状態保持用（SI単位系）
+        self.current_freq_hz = None  # 周波数 [Hz]
+        self.current_wave_m = None  # 波長 [m]
+        self.current_wavenum_m_inv = None  # 波数 [m⁻¹]
+
         self.print("初期化開始")
         self.initUI()
         self.print("初期化完了")
@@ -113,7 +119,7 @@ class FrequencyWavelengthConverter(QMainWindow):
         self.wave_input.textChanged.connect(self.on_wave_text_changed)
         self.wavenum_input.textChanged.connect(self.on_wavenum_text_changed)
 
-        # 単位変更時も再計算
+        # 単位変更時は再表示のみ（再計算はしない）
         self.freq_unit.currentIndexChanged.connect(self.on_freq_unit_changed)
         self.wave_unit.currentIndexChanged.connect(self.on_wave_unit_changed)
         self.wavenum_unit.currentIndexChanged.connect(self.on_wavenum_unit_changed)
@@ -259,6 +265,11 @@ class FrequencyWavelengthConverter(QMainWindow):
             wavenum_m_inv = freq_hz / c
             self.print(f"計算: 波数 = {freq_hz:.3e} / {c:.3e} = {wavenum_m_inv:.3e} m⁻¹")
 
+            # 内部状態を更新
+            self.current_freq_hz = freq_hz
+            self.current_wave_m = wave_m
+            self.current_wavenum_m_inv = wavenum_m_inv
+
             # updatingフラグを一旦解除して値を設定
             self.updating = False
             self.set_wavelength(wave_m)
@@ -291,6 +302,11 @@ class FrequencyWavelengthConverter(QMainWindow):
             # 波数の計算: k = 1/λ
             wavenum_m_inv = 1 / wave_m
             self.print(f"計算: 波数 = 1 / {wave_m:.3e} = {wavenum_m_inv:.3e} m⁻¹")
+
+            # 内部状態を更新
+            self.current_freq_hz = freq_hz
+            self.current_wave_m = wave_m
+            self.current_wavenum_m_inv = wavenum_m_inv
 
             # updatingフラグを一旦解除して値を設定
             self.updating = False
@@ -325,6 +341,11 @@ class FrequencyWavelengthConverter(QMainWindow):
             freq_hz = c * wavenum_m_inv
             self.print(f"計算: 周波数 = {c:.3e} * {wavenum_m_inv:.3e} = {freq_hz:.3e} Hz")
 
+            # 内部状態を更新
+            self.current_freq_hz = freq_hz
+            self.current_wave_m = wave_m
+            self.current_wavenum_m_inv = wavenum_m_inv
+
             # updatingフラグを一旦解除して値を設定
             self.updating = False
             self.set_wavelength(wave_m)
@@ -335,6 +356,25 @@ class FrequencyWavelengthConverter(QMainWindow):
             self.updating = False
         finally:
             self.print("=== 計算完了 ===\n")
+
+    def recalculate_all(self):
+        """全ての値を再計算（屈折率変更時に使用）"""
+        self.print("\n=== 全体再計算開始 ===")
+        if self.updating:
+            self.print("更新中のためスキップ")
+            return
+
+        # 最後に有効だった値から再計算
+        if self.current_freq_hz is not None:
+            self.print("周波数から再計算")
+            self.calculate_from_frequency()
+        elif self.current_wave_m is not None:
+            self.print("波長から再計算")
+            self.calculate_from_wavelength()
+        elif self.current_wavenum_m_inv is not None:
+            self.print("波数から再計算")
+            self.calculate_from_wavenumber()
+        self.print("=== 全体再計算完了 ===\n")
 
     # イベントハンドラ
     def on_freq_text_changed(self):
@@ -353,32 +393,29 @@ class FrequencyWavelengthConverter(QMainWindow):
             self.calculate_from_wavenumber()
 
     def on_freq_unit_changed(self):
+        """周波数単位変更時：再計算せず、現在の値を新しい単位で表示"""
         self.print(f"周波数単位変更: {self.freq_unit.currentText()}")
-        if self.freq_input.text() and not self.updating:
-            self.calculate_from_frequency()
+        if self.current_freq_hz is not None and not self.updating:
+            self.set_frequency(self.current_freq_hz)
 
     def on_wave_unit_changed(self):
+        """波長単位変更時：再計算せず、現在の値を新しい単位で表示"""
         self.print(f"波長単位変更: {self.wave_unit.currentText()}")
-        if self.wave_input.text() and not self.updating:
-            self.calculate_from_wavelength()
+        if self.current_wave_m is not None and not self.updating:
+            self.set_wavelength(self.current_wave_m)
 
     def on_wavenum_unit_changed(self):
+        """波数単位変更時：再計算せず、現在の値を新しい単位で表示"""
         self.print(f"波数単位変更: {self.wavenum_unit.currentText()}")
-        if self.wavenum_input.text() and not self.updating:
-            self.calculate_from_wavenumber()
+        if self.current_wavenum_m_inv is not None and not self.updating:
+            self.set_wavenumber(self.current_wavenum_m_inv)
 
     def on_refr_changed(self):
-        """屈折率が変更された時、最後に入力された値から再計算"""
+        """屈折率が変更された時、保存されている値から再計算"""
         self.print(f"屈折率変更: {self.refr_input.text()}")
         if self.updating:
             return
-
-        if self.freq_input.text() and not self.wave_input.text() and not self.wavenum_input.text():
-            self.calculate_from_frequency()
-        elif self.wave_input.text() and not self.wavenum_input.text():
-            self.calculate_from_wavelength()
-        elif self.wavenum_input.text():
-            self.calculate_from_wavenumber()
+        self.recalculate_all()
 
 
 def main():
