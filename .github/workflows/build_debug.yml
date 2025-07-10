@@ -1,0 +1,85 @@
+name: Debug Build
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  debug-build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Debug Python environment
+      run: |
+        python --version
+        python -c "import sys; print('Python executable:', sys.executable)"
+        python -c "import sys; print('Python path:', sys.path)"
+
+    - name: Install dependencies with verbose output
+      run: |
+        python -m pip install --upgrade pip
+        pip install --verbose PySide6
+        pip install --verbose opencv-python-headless
+        pip install --verbose matplotlib
+        pip install --verbose numpy
+        pip install --verbose pyserial
+        pip install --verbose pyinstaller
+
+    - name: List installed packages
+      run: |
+        pip list
+
+    - name: Test imports
+      run: |
+        python -c "import PySide6; print('PySide6 OK')"
+        python -c "import cv2; print('OpenCV OK')"
+        python -c "import matplotlib; print('Matplotlib OK')"
+        python -c "import numpy; print('NumPy OK')"
+        python -c "import serial; print('PySerial OK')"
+
+    - name: Test app imports
+      run: |
+        python -c "import app_wavelengthconverter; print('wavelength app import OK')"
+        python -c "import app_cmmp01; print('cmmp01 app import OK')"
+        python -c "import module_cmmp01; print('cmmp01 module import OK')"
+
+    - name: Create PyInstaller spec files
+      run: |
+        pyi-makespec --onefile --windowed --name="WavelengthConverter" app_wavelengthconverter.py
+        pyi-makespec --onefile --windowed --name="CMMP01Controller" --add-data "module_cmmp01.py;." app_cmmp01.py
+
+    - name: Show spec files
+      run: |
+        if (Test-Path "WavelengthConverter.spec") { Get-Content "WavelengthConverter.spec" }
+        if (Test-Path "CMMP01Controller.spec") { Get-Content "CMMP01Controller.spec" }
+
+    - name: Build with detailed output
+      run: |
+        pyinstaller --log-level DEBUG WavelengthConverter.spec
+        pyinstaller --log-level DEBUG CMMP01Controller.spec
+
+    - name: Check build results
+      run: |
+        Write-Host "=== Build directory contents ==="
+        Get-ChildItem -Recurse build -ErrorAction SilentlyContinue
+        Write-Host "=== Dist directory contents ==="
+        Get-ChildItem -Recurse dist -ErrorAction SilentlyContinue
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: debug-build-artifacts
+        path: |
+          dist/
+          build/
+          *.spec
+          *.log
