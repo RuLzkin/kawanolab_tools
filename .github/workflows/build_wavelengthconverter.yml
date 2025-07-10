@@ -1,0 +1,42 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install PySide6 pyinstaller
+
+    - name: Build executable
+      run: |
+        pyinstaller --onefile --windowed --name="WavelengthConverter" app_wavelengthconverter.py
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/WavelengthConverter.exe
+        body: |
+          ## 周波数・波長・波数変換器 ${{ github.ref_name }}
+
+          ### 使用方法
+          1. WavelengthConverter.exe をダウンロード
+          2. 実行（インストール不要）
+
+          ### 変更点
+          - 初回リリース
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
