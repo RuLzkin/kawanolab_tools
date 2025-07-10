@@ -52,11 +52,11 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install opencv-python-headless matplotlib numpy pyserial pyinstaller
+        pip install opencv-python-headless matplotlib numpy pyserial tqdm pyinstaller
 
     - name: Build executable
       run: |
-        pyinstaller --onefile --windowed --name="CMMP01Controller" --add-data "module_cmmp01.py;." --hidden-import="cv2" --hidden-import="matplotlib.backends.backend_tkagg" app_cmmp01.py
+        pyinstaller --onefile --windowed --name="CMMP01Controller" --add-data "module_cmmp01.py;." --hidden-import="cv2" --hidden-import="matplotlib.backends.backend_tkagg" --hidden-import="tqdm" --hidden-import="serial" app_cmmp01.py
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
