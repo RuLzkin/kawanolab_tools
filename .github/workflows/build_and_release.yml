@@ -1,0 +1,83 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'wavelength-v*'
+      - 'cmmp01-v*'
+
+jobs:
+  build-wavelength:
+    if: startsWith(github.ref, 'refs/tags/wavelength-')
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install PySide6 pyinstaller
+
+    - name: Build executable
+      run: |
+        pyinstaller --onefile --windowed --name="WavelengthConverter" app_wavelengthconverter.py
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/WavelengthConverter.exe
+        body: |
+          ## 周波数・波長・波数変換器 ${{ github.ref_name }}
+
+          ### 使用方法
+          1. WavelengthConverter.exe をダウンロード
+          2. 実行（インストール不要）
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-cmmp01:
+    if: startsWith(github.ref, 'refs/tags/cmmp01-')
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install tkinter opencv-python matplotlib numpy pyserial pyinstaller
+
+    - name: Build executable
+      run: |
+        pyinstaller --onefile --windowed --name="CMMP01Controller" --add-data "module_cmmp01.py;." app_cmmp01.py
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/CMMP01Controller.exe
+        body: |
+          ## CMMP01 Camera Controller ${{ github.ref_name }}
+
+          ### 機能
+          - CMMP01カメラの制御とデータ取得
+          - リアルタイムプレビュー表示
+          - 画像キャプチャ・録画機能
+          - CSV・PNG・MP4形式での保存
+
+          ### 使用方法
+          1. CMMP01Controller.exe をダウンロード
+          2. CMMP01デバイスをUSBで接続
+          3. 実行してポートを選択し接続
+
+          ### 必要要件
+          - Windows 10/11
+          - CMMP01デバイスとUSBケーブル
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
