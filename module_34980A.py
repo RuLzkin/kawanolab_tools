@@ -1,11 +1,11 @@
 import re
 import warnings
 from typing import Optional, cast, Union, List, Tuple
-from time import sleep, time
+from time import sleep, perf_counter
 import numpy as np
 import pyvisa
 from pyvisa.resources import MessageBasedResource
-from pyvisa.errors import VisaIOError, InvalidBinaryFormat
+from pyvisa.errors import VisaIOError
 from tqdm.contrib import tenumerate
 import logging
 
@@ -69,45 +69,6 @@ class KS34980A:
         """Context manager exit"""
         self.disconnect()
 
-    def disconnect(self) -> None:
-        """Properly disconnect from the instrument"""
-        if self.device is not None:
-            try:
-                # Only send *RST if the session is still valid
-                if self._is_connected and self._is_session_valid():
-                    try:
-                        self.device.write("*RST")
-                        sleep(0.1)
-                        logger.info(f"{MSG} Device reset before disconnect")
-                    except (VisaIOError, AttributeError):
-                        logger.debug(f"{MSG} Could not reset device (session may be invalid)")
-
-                # Try to close the device connection
-                if self._is_session_valid():
-                    self.device.close()
-                    logger.info(f"{MSG} Device disconnected")
-                else:
-                    logger.debug(f"{MSG} Device session was already invalid")
-
-            except (VisaIOError, AttributeError) as e:
-                # These exceptions are expected if the device is already closed
-                logger.debug(f"{MSG} Device already closed or invalid: {e}")
-            except Exception as e:
-                logger.warning(f"{MSG} Unexpected error during disconnect: {e}")
-            finally:
-                self.device = None
-                self._is_connected = False
-
-        # Close ResourceManager last
-        if self.res_man is not None:
-            try:
-                self.res_man.close()
-                logger.debug(f"{MSG} ResourceManager closed")
-            except Exception as e:
-                logger.warning(f"{MSG} Error closing ResourceManager: {e}")
-            finally:
-                self.res_man = None
-
     def refresh_resources(self) -> None:
         """Refresh the list of available VISA resources"""
         try:
@@ -169,6 +130,45 @@ class KS34980A:
         else:
             # TODO: Implement auto-detection
             logger.warning(f"{MSG} Auto-detection not implemented")
+
+    def disconnect(self) -> None:
+        """Properly disconnect from the instrument"""
+        if self.device is not None:
+            try:
+                # Only send *RST if the session is still valid
+                if self._is_connected and self._is_session_valid():
+                    try:
+                        self.device.write("*RST")
+                        sleep(0.1)
+                        logger.info(f"{MSG} Device reset before disconnect")
+                    except (VisaIOError, AttributeError):
+                        logger.debug(f"{MSG} Could not reset device (session may be invalid)")
+
+                # Try to close the device connection
+                if self._is_session_valid():
+                    self.device.close()
+                    logger.info(f"{MSG} Device disconnected")
+                else:
+                    logger.debug(f"{MSG} Device session was already invalid")
+
+            except (VisaIOError, AttributeError) as e:
+                # These exceptions are expected if the device is already closed
+                logger.debug(f"{MSG} Device already closed or invalid: {e}")
+            except Exception as e:
+                logger.warning(f"{MSG} Unexpected error during disconnect: {e}")
+            finally:
+                self.device = None
+                self._is_connected = False
+
+        # Close ResourceManager last
+        if self.res_man is not None:
+            try:
+                self.res_man.close()
+                logger.debug(f"{MSG} ResourceManager closed")
+            except Exception as e:
+                logger.warning(f"{MSG} Error closing ResourceManager: {e}")
+            finally:
+                self.res_man = None
 
     def _check_connection(self) -> None:
         """Check if device is connected, raise exception if not"""
@@ -490,14 +490,14 @@ def test_elapsed_time():
 
         for i, cnt in tenumerate(num_counts):
             for j, chan in tenumerate(num_channels, leave=False):
-                start = time()
+                start = perf_counter()
                 try:
                     ks34980a.configure_volt_dc(
                         "AUTO", "DEF", f"1001:{chan + 1000}",
                         nplc=0.02, tup_trig_tim_cnt=(0.01, cnt),
                         ms_timeout="AUTO", verbose=False
                     )
-                    mat_etime[i, j] = time() - start
+                    mat_etime[i, j] = perf_counter() - start
                 except Exception as e:
                     logger.error(f"Error at count={cnt}, channel={chan}: {e}")
                     mat_etime[i, j] = np.nan
@@ -507,7 +507,7 @@ def test_elapsed_time():
         dcnt = (num_counts[1] - num_counts[0]) / 2
         extent = (
             num_channels[0] - dchan, num_channels[-1] + dchan,
-            num_counts[-1] + dcnt, num_counts[0] - dcnt
+            num_counts[0] - dcnt, num_counts[-1] + dcnt
         )
 
         plt.figure(figsize=(10, 6))
@@ -536,9 +536,9 @@ def test_all_raw_data():
             ms_timeout="AUTO", verbose=True
         )
 
-        start = time()
+        start = perf_counter()
         raw_data = ks34980a.get_raw_data()
-        elapsed = time() - start
+        elapsed = perf_counter() - start
 
         logger.info(f"{MSG} Measurement completed in {elapsed:.3f} seconds")
 
@@ -560,8 +560,7 @@ if __name__ == "__main__":
     # Example usage - simple approach for tutorial/learning
     # The destructor will automatically clean up resources if an error occurs
     ks34980a = KS34980A(name_34980a)
-    ks34980a.configure_volt_dc(
-        "AUTO", "DEF", "1001")
+    ks34980a.configure_volt_dc("AUTO", "DEF", "1001")
     mean_vals, std_vals = ks34980a.measure()
     print(f"Mean: {mean_vals}")
     print(f"Std: {std_vals}")
