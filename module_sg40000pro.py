@@ -53,6 +53,18 @@ class SG40000pro():
 
         self.status(True)
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def __del__(self):
+        """Destructor - ensure serial connection is closed"""
+        try:
+            self.close()
+        except:
+            pass  # __del__では例外を発生させない
 
     def find_port(self) -> str:
         """Automatically find SG40000PRO device port
@@ -146,12 +158,20 @@ class SG40000pro():
         logger.debug(f"{MSG} ready.")
 
     def close(self) -> None:
-        """Close serial connection
-
-        Safely closes the serial port connection if it exists.
-        """
+        """Close serial connection"""
         if self.device is not None:
-            self.device.close()
+            try:
+                logger.info(f"{MSG} Output turned OFF before closing")
+                self.off()
+            except Exception as e:
+                logger.warning(f"{MSG} Could not turn off output: {e}")
+            try:
+                logger.info(f"{MSG} Close serial connection")
+                self.device.close()
+            except Exception as e:
+                logger.warning(f"{MSG} Error closing serial connection: {e}")
+            finally:
+                self.device = None
 
     def on(self, db_power: float, hz_freq: float) -> None:
         """Turn on signal generator with specified parameters
