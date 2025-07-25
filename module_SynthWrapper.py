@@ -1,16 +1,29 @@
+from pathlib import Path
 from typing import Optional, Tuple
 import time
+import logging
 import serial.tools.list_ports
+import pickle
+from tqdm.contrib import tenumerate
 from windfreak import SynthHD
 
+MSG = "SynthHDWrapper>>"
+MODULE_DIR = Path(__file__).parent
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class Synth_Wrapper():
-    def __init__(self, str_port: Optional[str] = None, num_port: Optional[int] = None, debug: bool = False) -> None:
+
+    list_lim_freq = []
+    list_lim_pow = []
+
+    def __init__(self, str_port: Optional[str] = None, debug: bool = False) -> None:
         """Synth_Wrapper(str_port: str = None, num_port: int = 0, debug=False)
 
         Args:
             str_port: str, this has priority over num_port (ex. "COM3")
-            num_port: int, this is based on list(serial.tools.list_ports.comports())
             debug: debug mode (dummy mode)
 
         Returns:
@@ -27,27 +40,31 @@ class Synth_Wrapper():
             return
         if str_port is None:
             list_port = list(serial.tools.list_ports.comports())
-            for _i in range(len(list_port)):
-                # print(_i, list_port[_i].name)
-                if num_port is None:
-                    try:
-                        print("SynthHDWrapper>> Connect --", list_port[_i].name, ">> ", end="", flush=True)
-                        _synth = SynthHD(list_port[_i].name)
-                    except:  # noqa
-                        print("Could not be connected")
-                    else:
-                        print("Successfully connected")
-                        _synth.close()
-                        num_port = _i
-                        break
-            if num_port is None:
+            for _port in list_port:
+                try:
+                    _synth = SynthHD(_port.name)
+                except:  # noqa
+                    logger.info(f"{MSG} Connect -- {_port.name} >> Could not be connected")
+                else:
+                    logger.info(f"{MSG} Connect -- {_port.name} >> Successfully connected")
+                    _synth.close()
+                    str_port = _port.name
+                    break
+            if str_port is None:
                 raise ValueError("Valid port not found")
-            str_port = list_port[num_port].name
         self.synth = SynthHD(str_port)
         self.synth[0].enable = False
         self.synth[0].power = 15
         self.synth[0].frequency = 8.0e9
-        print("SynthHDWrapper>> Connect to", str_port)
+        logger.info(f"{MSG} Connect to {str_port}")
+        try:
+            self.input_limit()
+        except FileNotFoundError:
+            logger.warning(f"{MSG} limit list not found")
+            self.measure_limit([float(_i) * 1e9 for _i in range(5, 25, 1)])
+            self.output_limit()
+        else:
+            logger.info(f"{MSG} load limit list")
 
     def on_no_feedback(self, power: Optional[float] = None, frequency: Optional[float] = None) -> Tuple[float, float, bool]:
         """on(power: float | None, frequency: float | None)
@@ -121,7 +138,7 @@ class Synth_Wrapper():
             _freq = _freq * 1e-9
         return _pow, _freq, _cali
 
-    def on(self, power: Optional[float] = None, frequency: Optional[float] = None) -> Tuple[float, float, bool]:
+    def on(self, power: Optional[float] = None, frequency: Optional[float] = None, use_limit: bool = True) -> Tuple[float, float, bool]:
         """on(power: float | None, frequency: float | None)
 
         If input args are omitted, the previous values are applied
@@ -129,6 +146,7 @@ class Synth_Wrapper():
         Args:
             power (float, None): [dBm] -40 ~ 0.01 ~ +18
             frequency (float, None): [Hz] 0.01e9 ~ 0.1 ~ 24e9
+            use_limit (bool)
 
         Returns:
             self.status() (power, frequency, calibrated)
@@ -140,91 +158,90 @@ class Synth_Wrapper():
         """
         if self.debug:
             return self.status()
+        if frequency is not None:
+            self.synth[0].frequency = float(frequency)
         if power is None:
             power = self.synth[0].power
         else:
+            if use_limit and frequency is not None:
+                try:
+                    pow_lim = self.limited_power(frequency)
+                    # print("Power limit:", pow_lim)
+                except ValueError:
+                    # print("Power limit not found")
+                    pow_lim = 15
+                power = min(power, pow_lim)
             self.synth[0].power = float(power)
-        if frequency is not None:
-            self.synth[0].frequency = float(frequency)
         self.synth[0].enable = True
         is_calibrated = self.synth[0].calibrated
-        step_power = 0.5
+        step_power = 0.1
         if power is None:
             raise ValueError("Power value is invalid")
         _sign = (power >= 0) * 2 - 1
         while not is_calibrated:
             self.synth[0].power -= step_power * _sign
+            # print("not calibrated:", self.synth[0].power)
             time.sleep(0.1)  # for signal rise time
             is_calibrated = self.synth[0].calibrated
         time.sleep(0.01)  # for signal rise time
         return self.status()
 
+    def output_limit(self):
+        with open(MODULE_DIR / "lib_synthhd_power.wf", "wb") as f:
+            pickle.dump([self.list_lim_freq, self.list_lim_pow], f)
+
+    def input_limit(self):
+        with open(MODULE_DIR / "lib_synthhd_power.wf", "rb") as f:
+            _list_load = pickle.load(f)
+        self.list_lim_freq, self.list_lim_pow = _list_load
+
+    def measure_limit(self, list_hz_freq: list):
+        """measure_limit
+        """
+        self.list_lim_freq = []
+        self.list_lim_pow = []
+        for _i, _freq in tenumerate(list_hz_freq):
+            _pow, _, _ = self.on(15, _freq, use_limit=False)
+            time.sleep(0.1)
+            self.off()
+            self.list_lim_freq.append(_freq)
+            self.list_lim_pow.append(_pow)
+
+    def limited_power(self, frequency: float, verbose=False):
+        if verbose:
+            logger.info(f"{MSG} limiter>>> input freq: {frequency}")
+        if len(self.list_lim_freq) == 0:
+            raise ValueError("Invalid limit list")
+        if frequency > self.list_lim_freq[-1] or frequency < self.list_lim_freq[0]:
+            raise ValueError(f"{frequency} is out of list")
+        try:
+            index_exact = self.list_lim_freq.index(frequency)
+            pow_lim = self.list_lim_pow[index_exact]
+            return pow_lim
+        except ValueError:
+            pass
+
+        for _i in range(len(self.list_lim_freq) - 1):
+            _a, _b = self.list_lim_freq[_i], self.list_lim_freq[_i + 1]
+            if _a < frequency < _b:
+                pow_lim = ((frequency - _a) * self.list_lim_pow[_i] + (_b - frequency) * self.list_lim_pow[_i + 1]) / (_b - _a)
+                return pow_lim
+
+        raise ValueError("Unexpected error occured")
+
 
 if __name__ == "__main__":
-    # synth = Synth_Wrapper("COM3")
     synth = Synth_Wrapper("COM3")
     synth.on(15, 8e9)
     synth.off()
 
-    # import numpy as np
-    # while True:
-    #     for _freq in np.arange(1, 23.5, 0.1):
-    #         # for _pow in np.arange(0, 15.1, 0.5):
-    #         for _pow in np.arange(15, 15.1, 0.5):
-    #             start = time.time()
-    #             synth.on(_pow, _freq * 1e9)
-    #             print(
-    #                 "\r {0:3.1f} GHz, {1:3.1f} dB, {2:5.1f} [msec]".format(
-    #                     _freq, _pow, 1000 * (time.time() - start)),
-    #                 end="")
-    #             time.sleep(0.5)
-    #             synth.off()
+    """Limiter"""
+    # vec_freq = np.arange(4.5, 24.001, 0.1) * 1e9
+    # synth.measure_limit(vec_freq.tolist())
+    # synth.output_limit()
 
-    import numpy as np
+    """Limiter Check"""
     from matplotlib import pyplot as plt
-    from tqdm import tqdm
-    power = np.arange(-40, +18, 0.5)
-    freq = np.arange(1, 24, 0.5) * 1e9
-    mat_power = np.zeros((len(power), len(freq)))
-    mat_freq = np.zeros((len(power), len(freq)))
-    mat_cali = np.zeros((len(power), len(freq)))
-    mat_time = np.zeros((len(power), len(freq)))
-    for _i_f, _f in tqdm(enumerate(freq), total=len(freq)):
-        for _i_p, _p in tqdm(enumerate(power), total=len(power), leave=False):
-            _start = time.perf_counter()
-            # _pow, _freq, _cali = synth.on_feedback(_p, _f)
-            _pow, _freq, _cali = synth.on(_p, _f)
-            _time = time.perf_counter() - _start
-            synth.off()
-            mat_power[_i_p, _i_f] = _pow
-            mat_freq[_i_p, _i_f] = _freq * 1e-9
-            mat_cali[_i_p, _i_f] = 1.0 if _cali else 0.0
-            mat_time[_i_p, _i_f] = _time
-    _df = (freq[1] - freq[0]) / 2
-    _dp = (power[1] - power[0]) / 2
-    _extent = ((freq[0] - _df) * 1e-9, (freq[-1] + _df) * 1e-9, power[0] - _dp, power[-1] + _dp)
     plt.figure()
-    plt.imshow(mat_power, extent=_extent, aspect="auto", origin='lower')
-    plt.xlabel("Frequency [GHz]")
-    plt.ylabel("Power [dBm]")
-    plt.colorbar(label="Power")
-    plt.tight_layout()
-    plt.figure()
-    plt.imshow(mat_freq, extent=_extent, aspect="auto", origin='lower')
-    plt.xlabel("Frequency [GHz]")
-    plt.ylabel("Power [dBm]")
-    plt.colorbar(label="Frequency")
-    plt.tight_layout()
-    plt.figure()
-    plt.imshow(mat_cali, extent=_extent, aspect="auto", origin='lower')
-    plt.xlabel("Frequency [GHz]")
-    plt.ylabel("Power [dBm]")
-    plt.colorbar(label="Calibrated")
-    plt.tight_layout()
-    plt.figure()
-    plt.imshow(mat_time, extent=_extent, aspect="auto", origin='lower')
-    plt.xlabel("Frequency [GHz]")
-    plt.ylabel("Power [dBm]")
-    plt.colorbar(label="Time")
-    plt.tight_layout()
+    plt.plot(synth.list_lim_freq, synth.list_lim_pow)
     plt.show()
