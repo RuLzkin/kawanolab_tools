@@ -81,16 +81,16 @@ class SG40000pro():
         list_port = list(list_ports.comports())
         for _port in list_port:
             try:
-                with Serial(_port.name, 115200, timeout=1) as device:
+                with Serial(_port.device, 115200, timeout=1) as device:
                     device.write(b"*IDN?\n")
                     time.sleep(0.1)
                     response = device.readline().decode().rstrip()
                     if response.find("SG40000PRO") == -1:
                         raise SerialException
-                    logger.info(f"{MSG} Connect -- {_port.name} >> Successfully connected")
-                    return _port.name
+                    logger.info(f"{MSG} Connect -- {_port.device} >> Successfully connected")
+                    return _port.device
             except SerialException:
-                logger.info(f"{MSG} Connect -- {_port.name} >> Could not be connected")
+                logger.info(f"{MSG} Connect -- {_port.device} >> Could not be connected")
 
         raise FileNotFoundError
 
