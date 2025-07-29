@@ -1,13 +1,15 @@
+import platform
 import re
 import warnings
 from typing import Optional, cast, Union, List, Tuple
 from time import sleep, perf_counter
 import numpy as np
-import pyvisa
+from pyvisa import ResourceManager
 from pyvisa.resources import MessageBasedResource
 from pyvisa.errors import VisaIOError
 from tqdm.contrib import tenumerate
 import logging
+from module_usbtmc import USBTMCResourceManager
 
 MSG = "DAQ970AWrapper>>"
 
@@ -47,7 +49,7 @@ class Daq970a():
         """
         self.device: Optional[MessageBasedResource] = None
         self.list_resources: List[str] = []
-        self.res_man: Optional[pyvisa.ResourceManager] = None
+        self.res_man: Union[ResourceManager, USBTMCResourceManager, None] = None
         self._is_connected: bool = False
 
         self.refresh_resources()
@@ -72,7 +74,7 @@ class Daq970a():
     def refresh_resources(self):
         """Refresh the list of available VISA resources"""
         try:
-            self.res_man = pyvisa.ResourceManager()
+            self.res_man = ResourceManager() if platform.system() == 'Windows' else USBTMCResourceManager()
             self.list_resources = list(self.res_man.list_resources())
             logger.info(f"{MSG} Found {len(self.list_resources)} VISA resources")
         except Exception as e:
@@ -145,12 +147,14 @@ class Daq970a():
 
         name_suggest = None
         for _res in self.list_resources:
+            if "dev/ttyS" in _res:
+                continue
             try:
                 _dev = cast(MessageBasedResource, self.res_man.open_resource(_res))
                 _return = _dev.query("*IDN?")
                 _dev.close()
                 logger.info(f"{MSG} Could connect: {_res}")
-            except pyvisa.errors.VisaIOError:
+            except VisaIOError:
                 _return = ""
                 logger.error(f"{MSG} Could not connect: {_res}")
             if "DAQ970A" in _return:
