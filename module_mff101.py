@@ -62,5 +62,5 @@ if __name__ == "__main__":
             # sync_move([flipper1, flipper2, flipper3], [1, 1, 1])
     except KeyboardInterrupt:
         del flipper1
-        # del flipper2
-        # del flipper3
+        del flipper2
+        del flipper3
