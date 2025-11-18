@@ -17,13 +17,13 @@ OUTP OFF
 OUTP?
 OUTP2 OFF
 """
-ADDRESS_DEVICE_A = "USB::4883::32842::M01263117"
-ADDRESS_DEVICE_B = "USB::4883::32842::M01263118"
-ADDRESS_DEVICE_C = "USB::4883::32842::M01262971"
+ADDRESS_A = "USB::4883::32842::M01263117"
+ADDRESS_B = "USB::4883::32842::M01263118"
+ADDRESS_C = "USB::4883::32842::M01262971"
 
-PARAMETER_A = {"temp_set": 25.0, "unit_set": "C", "curr_set": 0.27}
-PARAMETER_B = {"temp_set": 25.0, "unit_set": "C", "curr_set": 0.35}
-PARAMETER_C = {"temp_set": 20.0, "unit_set": "C", "curr_set": 0.45}
+PARAMETER_A = {"temp_set": 25.0, "unit_set": "C", "curr_set": 0.285}
+PARAMETER_B = {"temp_set": 25.0, "unit_set": "C", "curr_set": 0.365}
+PARAMETER_C = {"temp_set": 20.0, "unit_set": "C", "curr_set": 0.455}
 
 MSG = "ITC4002QCL>>"
 
@@ -37,49 +37,64 @@ class ITC4002QCL():
     curr_set: Optional[float]
     temp_set: Optional[float]
 
-    def __init__(self, address_device=None, debug=False) -> None:
-        self.debug = debug
+    def __init__(self, address=None, name="ITC4002QCL", debug=False) -> None:
+        self.log_header = f"{name}>>"
+        self._debug = debug
         if debug:
             return
-        if address_device is None:
+        if address is None:
             raise ValueError("Please specify address_device")
 
         self.res_man = pyvisa.ResourceManager()
-        self.device = cast(MessageBasedResource, self.res_man.open_resource(address_device))
-        logger.info(f"{MSG} Connected to {address_device}")
+        self.device = cast(MessageBasedResource, self.res_man.open_resource(address))
+        self.info(f"Connected to {address}")
         res_idn = self.query("*IDN?")
-        logger.info(f"{MSG} Device ID: {res_idn}")
-        self.address = address_device
+        self.info(f"Device ID: {res_idn}")
+        self.address = address
         self.curr_set = None
         self.temp_set = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.device is not None:
+            self.device.close()
+            self.device = None
+            self.info(f"Device connection closed: {self.address}")
 
     def __del__(self):
         if self.device is not None:
             self.device.close()
             self.device = None
-            logger.info(f"{MSG} Device connection closed: {self.address}")
+            self.info(f"Device connection closed: {self.address}")
+
+    def info(self, message: str):
+        logger.info(f"{self.log_header} {message}")
+
+    def debug(self, message: str):
+        logger.debug(f"{self.log_header} {message}")
 
     def write(self, command: str) -> None:
-        if self.debug:
-            logger.debug(f"{MSG} Debug mode: write('{command}')")
+        if self._debug:
+            self.debug(f"Debug mode: write('{command}')")
             return
         if self.device is None:
             raise ValueError("Device not connected")
         self.device.write(command)
-        # logger.debug(f"{MSG} write('{command}')")
-        logger.debug(f"{MSG} write('{command}')")
+        self.debug(f"write('{command}')")
         _err_after = self.check_error()
         if len(_err_after) > 0:
             logger.error(f"{MSG} Errors after write('{command}')")
 
     def query(self, command: str) -> str:
-        if self.debug:
-            logger.debug(f"{MSG} Debug mode: query('{command}')")
+        if self._debug:
+            self.debug(f"Debug mode: query('{command}')")
             return ""
         if self.device is None:
             raise ValueError("Device not connected")
         response = self.device.query(command).rstrip()
-        logger.debug(f"{MSG} query('{command}') -> '{response}'")
+        self.debug(f"query('{command}') -> '{response}'")
         # no err check for query because error checker calls query
         return response
 
@@ -113,27 +128,27 @@ class ITC4002QCL():
         if _temp_set is None:
             raise ValueError("Temperature setpoint not defined")
         _cmd = "ON" if on else "OFF"
-        logger.info(f"{MSG} TEC { _cmd }")
+        self.info(f"TEC { _cmd }")
         self.write(f"OUTP2 { _cmd }")
 
         if not on:
             return
         self.wait_tec(percent_threshold)
-        logger.info(f"{MSG} TEC { _cmd } done")
+        self.info(f"TEC { _cmd } done")
 
     def ld(self, on: bool = True, threshold = 0.01) -> None:
         _cmd = "ON" if on else "OFF"
-        logger.info(f"{MSG} LD { _cmd }")
+        self.info(f"LD { _cmd }")
         self.write(f"OUTP { _cmd }")
 
         def _cond(curr: float) -> bool:
             return curr >= threshold if on else curr <= threshold
         while not _cond(self.meas_curr()):
             sleep(0.1)
-        logger.info(f"{MSG} LD { _cmd } done")
+        self.info(f"LD { _cmd } done")
         if on:
             self.wait_tec()
-            logger.info(f"{MSG} TEC:stable")
+            self.info(f"TEC:stable")
 
     def wait_tec(self, percent_threshold: float = 1) -> None:
         _temp_set = self.temp_set
@@ -153,7 +168,7 @@ class ITC4002QCL():
             self.curr_set = parameter["curr_set"]
 
 if __name__ == "__main__":
-    itc = ITC4002QCL(ADDRESS_DEVICE_C)
+    itc = ITC4002QCL(ADDRESS_C)
     itc.set_from_lib(PARAMETER_C)
 
     print("Temperature:", itc.meas_temp())
