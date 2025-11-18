@@ -3,6 +3,26 @@ import warnings
 import random
 from pylablib.devices import Thorlabs
 
+"""
+MFF101:
+    RT:
+        0: Transmittance
+        1: Reflectance
+    M1:
+        0: On
+        1: Off
+    M2:
+        0: On
+        1: Off
+    [0, 1, 1] = Transmittance, beam A
+    [0, 0, 1] = Transmittance, beam B
+    [0, 1, 0] = Transmittance, beam C
+"""
+
+SERIALNUMBER_RT = "37008835"
+SERIALNUMBER_M1 = "37008924"
+SERIALNUMBER_M2 = "37009004"
+
 warnings.filterwarnings('ignore', message="model number .* doesn't match")
 
 State_MFF = Union[int, bool, None]
@@ -13,6 +33,12 @@ class MFF101():
 
     def __del__(self):
         self.flipper.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.__del__()
 
     def wait(self):
         self.flipper.wait_for_status("moving_bk", False)
@@ -37,29 +63,34 @@ class MFF101():
 
 
 def sync_move(flippers: List[MFF101], states: List[State_MFF]):
-    for flip, stat in zip(flippers, states):
-        flip.wait()
+    sync_wait(flippers)
     for flip, stat in zip(flippers, states):
         flip.move_to_state(stat)
 
+def sync_wait(flippers: List[MFF101]):
+    for flip in flippers:
+        flip.wait()
+
 
 if __name__ == "__main__":
-    flipper1  = MFF101("37008835")
-    flipper2  = MFF101("37008924")
-    flipper3  = MFF101("37009004")
+    flipper1  = MFF101(SERIALNUMBER_RT)
+    flipper2  = MFF101(SERIALNUMBER_M1)
+    flipper3  = MFF101(SERIALNUMBER_M2)
 
-    flipper1.show_status()
-    flipper1.move_to_state(0)
-    flipper1.move_to_state(1)
+    # flipper1.show_status()
+    # flipper1.move_to_state(0)
+    # flipper1.move_to_state(1)
 
     try:
-        while True:
-            random.choices([True, False, None], k=3)
-            sync_move(
-                [flipper1, flipper2, flipper3],
-                random.choices([True, False, None], k=3))
-            # sync_move([flipper1, flipper2, flipper3], [0, 0, 0])
-            # sync_move([flipper1, flipper2, flipper3], [1, 1, 1])
+        sync_move([flipper1, flipper2, flipper3], [0, 0, 0])
+        sync_move([flipper1, flipper2, flipper3], [1, 1, 1])
+        # while True:
+        #     random.choices([True, False, None], k=3)
+        #     sync_move(
+        #         [flipper1, flipper2, flipper3],
+        #         random.choices([True, False, None], k=3))
+        #     # sync_move([flipper1, flipper2, flipper3], [0, 0, 0])
+        #     # sync_move([flipper1, flipper2, flipper3], [1, 1, 1])
     except KeyboardInterrupt:
         del flipper1
         del flipper2
