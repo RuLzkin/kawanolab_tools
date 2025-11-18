@@ -5,6 +5,7 @@ import time
 import os
 import csv
 from datetime import datetime
+import tempfile
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
@@ -582,7 +583,7 @@ class CMMP01GUI:
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
 
-        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        plt.savefig(filename, dpi=300)
         plt.close()
 
     def save_csv(self, data_array, timestamps, filename):
@@ -613,20 +614,42 @@ class CMMP01GUI:
             if not png_files:
                 return
 
-            # Read first image to get dimensions
-            first_img = cv2.imread(os.path.join(folder, png_files[0]))
-            height, width, layers = first_img.shape
+            # Read all images using numpy
+            images = []
+            for png_file in png_files:
+                filepath = os.path.join(folder, png_file)
+                # Read via NumPy
+                img_array = np.fromfile(filepath, dtype=np.uint8)
+                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                if img is not None:
+                    images.append(img)
+
+            if not images:
+                return
+
+            # Determine target dimensions
+            height, width = images[0].shape[:2]
 
             # Create video writer
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            video = cv2.VideoWriter(video_filename, fourcc, 10.0, (width, height))
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # type: ignore
+            temp_video = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False, dir=folder)
+            temp_video_path = temp_video.name
+            temp_video.close()
+            video = cv2.VideoWriter(temp_video_path, fourcc, 10.0, (width, height))
 
             # Add frames to video
-            for png_file in png_files:
-                img = cv2.imread(os.path.join(folder, png_file))
+            for img in images:
+                h, w = img.shape[:2]
+                if (h, w) != (height, width):
+                    img = cv2.resize(img, (width, height))
                 video.write(img)
 
             video.release()
+
+            # rename
+            if os.path.exists(video_filename):
+                os.remove(video_filename)
+            os.rename(temp_video_path, video_filename)
 
         except Exception as e:
             print(f"Video creation failed: {str(e)}")
