@@ -1,14 +1,11 @@
-import platform
 import time
 from typing import Optional
 import numpy as np
-import pyvisa
 from pyvisa import ResourceManager
 from pyvisa.resources import SerialInstrument
 from pyvisa.constants import StopBits, Parity, VI_ASRL_FLOW_RTS_CTS
 from typing import cast
 import logging
-from module_usbtmc import USBTMCResourceManager
 
 MSG = "SHOT702H>>"
 
@@ -18,60 +15,21 @@ logger = logging.getLogger(__name__)
 
 
 class Shot702h():
-    def __init__(self, name: Optional[str] = None, debug=False) -> None:
+    def __init__(self, port: str, debug=False) -> None:
         self.debug = debug
         if debug:
             return
         self.device: Optional[SerialInstrument] = None
-        self.res_man = ResourceManager() if platform.system() == 'Windows' else USBTMCResourceManager()
-        num_device_suggest = None
+        self.res_man = ResourceManager()
 
-        for _ind, _res in enumerate(self.res_man.list_resources()):
-            print(f"{MSG} Resource Manager>>", _res, end="", flush=True)
-            # Q:コマンド等を使ってSHOT702Hであることを確認するほうが良い
-            # if "ASRL" not in _res and "TCPIP" not in _res and "USB" not in _res and "GPIB" not in _res:
-            #     print(" -- not via ASRL or not via TCPIP")
-            #     continue
-            # _inst = self.res_man.open_resource(_res)
-            # if _inst is None:
-            #     print(_res + "can not be opend")
-            #     continue
-            if "ASRL" not in _res:
-                print('\r\033[K', end='', flush=True)
-                logger.info(f"{MSG} Resource Manager>> {_res} -- not via ASRL")
-                continue
-            try:
-                _inst = cast(SerialInstrument, self.res_man.open_resource(_res))
-                if _inst is None:
-                    # print(_res + "can not be opend")
-                    print('\r\033[K', end='', flush=True)
-                    logger.info(f"{MSG} Resource Manager>> {_res} -- could not be opened")
-                    continue
-                self.setup_serial(_inst)
-                while True:
-                    _idn = _inst.query("?:N")
-                    if _idn not in "NG":
-                        break
-                    time.sleep(1.0)
-                _inst.close()
-            except pyvisa.errors.VisaIOError as e:
-                print(" --", e)
-                continue
-            if "SHOT-702H" in _idn:
-                num_device_suggest = _ind
-                # print(" -- Found SHOT-702H")
-                print('\r\033[K', end='', flush=True)
-                logger.info(f"{MSG} Resource Manager>> {_res} -- Found SHOT-702H")
-                break
-            else:
-                # print(" -- Other device")
-                logger.info(f"{MSG} Resource Manager>> {_res} -- Other device")
+        self.device = cast(SerialInstrument, self.res_man.open_resource(port))
+        self.setup_serial(self.device)
+        self.wait()
+        logger.info(f"{MSG} Connected: {port}")
+        _idn = self.device.query("?:N")
+        logger.info(f"{MSG} IDN Response: {_idn}")
 
-        if num_device_suggest is not None:
-            self.setup(num_device_suggest)
-
-        if num_device_suggest is None:
-            raise ValueError("Could not find SHOT-702H")
+        self.tpp = self.TravelPerPulse()
 
     def setup_serial(self, instrument: SerialInstrument):
         instrument.baud_rate = 38400
@@ -83,18 +41,22 @@ class Shot702h():
 
         instrument.read_termination = '\r\n'
         instrument.write_termination = '\r\n'
-        time.sleep(0.5)
+        time.sleep(0.1)
 
-    def _exist_device(self):
-        return self.device is not None
+    def __del__(self):
+        if self.device is not None:
+            self.device.close()
+            self.device = None
+            logger.info(f"{MSG} Device connection closed")
 
-    def setup(self, num_device):
-        self.device = cast(SerialInstrument, self.res_man.open_resource(
-            self.res_man.list_resources()[num_device]
-        ))
-        self.setup_serial(self.device)
+    def __enter__(self):
+        return self
 
-        self.wait()
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.device is not None:
+            self.device.close()
+            self.device = None
+            logger.info(f"{MSG} Device connection closed")
 
     def move_abs(self, list_value, show=False, show_cmd=False):
         if self.device is None:
@@ -128,21 +90,20 @@ class Shot702h():
             time.sleep(0.1)
             return
 
-        list_tpp = self.TravelPerPulse()
-
         list_sign = ["+", "+"]
         for _i in range(len(list_value_deg)):
-            list_value_deg[_i] = int(list_value_deg[_i] / list_tpp[_i] * 100)
-            if list_value_deg[_i] < 0:
-                list_sign[_i] = "-"
-                list_value_deg[_i] *= -1
+            list_value_deg[_i] = list_value_deg[_i] % 360
+            if list_value_deg[_i] > 350:
+                raise ValueError("350~359deg causes unexpected error")
+            list_value_deg[_i] = int((list_value_deg[_i]) / self.tpp[_i] * 100)
+
         self.wait(show=False)
         str_command = "A:W{0[0]}P{1[0]}{0[1]}P{1[1]}".format(list_sign, list_value_deg)
         if show_cmd:
             # print(str_command)
             logger.info(f"{MSG} move_abs command: {str_command}")
         _ret_a = self.device.query(str_command)
-        self.wait(show=False)
+        self.wait(show=False, rotate=True)
         _ret_g = self.device.query("G:")
         self.wait(show, rotate=True)
 
@@ -153,35 +114,30 @@ class Shot702h():
             raise ValueError("Device is not connected")
         # if show:
         #     print("")
-        while "B" in self.device.query("!:"):
+        while "R" not in self.device.query("!:", 0.01):
             time.sleep(0.01)
-            if show:
-                _tpp = self.TravelPerPulse()
+            if show and "B" in self.device.query("!:", 0.01):
+                _tpp = self.tpp
                 _msg = self.device.query("Q:").rstrip()
                 for _cut in ("\x00", "\r", "\n", " "):
                     _msg = _msg.replace(_cut, "")
                 list_status = _msg.split(",")
                 if rotate:
-                    print(
-                        f"\r{MSG} current position:{float(list_status[0]) * _tpp[0] / 100: 4.2f} deg, {float(list_status[1]) * _tpp[1] / 100: 4.2f} deg", end="")
+                    print(f"\r{MSG} current position:{float(list_status[0]) * _tpp[0] / 100:7.2f} deg, {float(list_status[1]) * _tpp[1] / 100:7.2f} deg", end="")
                 else:
-                    print(
-                        f"\r{MSG} current position:",
-                        float(list_status[0]) * _tpp[0], "um,",
-                        float(list_status[1]) * _tpp[1], "um,",
-                        end="")
+                    print(f"\r{MSG} current position:{float(list_status[0]) * _tpp[0]:9.1f} um, {float(list_status[1]) * _tpp[1]:9.1f} um", end="")
             # Timeout process
         if show:
             print('\r\033[K', end='', flush=True)
-            _tpp = self.TravelPerPulse()
+            _tpp = self.tpp
             _msg = self.device.query("Q:").rstrip()
             for _cut in ("\x00", "\r", "\n", " "):
                 _msg = _msg.replace(_cut, "")
             list_status = _msg.split(",")
             if rotate:
-                logger.info(f"{MSG} current position: { float(list_status[0]) * _tpp[0] / 100: 4.2f} deg, {float(list_status[1]) * _tpp[1] / 100: 4.2f} deg")
+                logger.info(f"{MSG} current position: { float(list_status[0]) * _tpp[0] / 100:7.2f} deg, {float(list_status[1]) * _tpp[1] / 100:7.2f} deg")
             else:
-                logger.info(f"{MSG} current position: { float(list_status[0]) * _tpp[0]} um, {float(list_status[1]) * _tpp[0]} um")
+                logger.info(f"{MSG} current position: { float(list_status[0]) * _tpp[0]:9.1f} um, {float(list_status[1]) * _tpp[1]:9.1f} um")
 
     def status(self):
         if self.device is None:
@@ -236,8 +192,10 @@ class Shot702h():
             return
         if self.device is None:
             raise ValueError("Device is not connected")
+        logger.info(f"{MSG} return to the homeposition")
         self.device.query("H:W")
         self.wait(show, rotate)
+        logger.info(f"{MSG} reset the axis data")
 
     def set_memory_switch(self):
         if self.device is None:
@@ -251,7 +209,7 @@ class Shot702h():
 
 
 if __name__ == "__main__":
-    shot702 = Shot702h()
+    shot702 = Shot702h(port="ASRL3::INSTR")
     # SHOT702H.set_memory_switch()
     # shot702.homeposition(show=True)
     shot702.homeposition(show=True, rotate=True)
