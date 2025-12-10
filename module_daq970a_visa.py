@@ -9,9 +9,8 @@ from pyvisa.resources import MessageBasedResource
 from pyvisa.errors import VisaIOError
 from tqdm.contrib import tenumerate
 import logging
-from module_usbtmc import USBTMCResourceManager
 
-MSG = "DAQ970AWrapper>>"
+MSG = "DAQ970A>>"
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -49,10 +48,11 @@ class Daq970a():
         """
         self.device: Optional[MessageBasedResource] = None
         self.list_resources: List[str] = []
-        self.res_man: Union[ResourceManager, USBTMCResourceManager, None] = None
+        # self.res_man: Union[ResourceManager, USBTMCResourceManager, None] = None
+        self.res_man = ResourceManager()
         self._is_connected: bool = False
 
-        self.refresh_resources()
+        # self.refresh_resources()
         self.connect_device(name)
         if self._is_connected:
             self.write("*CLS")
@@ -74,7 +74,7 @@ class Daq970a():
     def refresh_resources(self):
         """Refresh the list of available VISA resources"""
         try:
-            self.res_man = ResourceManager() if platform.system() == 'Windows' else USBTMCResourceManager()
+            self.res_man = ResourceManager()
             self.list_resources = list(self.res_man.list_resources())
             logger.info(f"{MSG} Found {len(self.list_resources)} VISA resources")
         except Exception as e:
@@ -92,13 +92,15 @@ class Daq970a():
         """
         if self.res_man is None:
             raise DAQ970AError("ResourceManager is undefined")
-        assert self.list_resources is not None
+        # assert self.list_resources is not None
 
         if name is None:
             name = self.find_device()
 
         self.device = cast(MessageBasedResource, self.res_man.open_resource(name))
-        idn_response = self.device.query("*IDN?")
+        # self.device = self.res_man.open_resource(name)
+        logger.info(f"{MSG} Try Connection: {name}")
+        idn_response = self.device.query("*IDN?", 0.5)
         self._is_connected = True
         logger.info(f"{MSG} Connected: {name}, *IDN?: {idn_response.rstrip()}")
 
@@ -143,7 +145,8 @@ class Daq970a():
 
     def find_device(self) -> str:
         assert self.res_man is not None
-        assert self.list_resources is not None
+        # assert self.list_resources is not None
+        self.refresh_resources()
 
         name_suggest = None
         for _res in self.list_resources:
@@ -191,9 +194,9 @@ class Daq970a():
         assert self.device is not None
 
         try:
-            response = self.device.query(command)
-            if sec_sleep_after is not None:
-                sleep(sec_sleep_after)
+            response = self.device.query(command, sec_sleep_after)
+            # if sec_sleep_after is not None:
+            #     sleep(sec_sleep_after)
             if verbose:
                 logger.info(f"{MSG} SCPI query {command} --> {response.rstrip()}")
             return response.rstrip()
@@ -282,6 +285,9 @@ class Daq970a():
             if str_channel is not None:
                 self.write(f"ROUT:SCAN (@{str_channel})")
 
+            # Configure voltage DC measurement
+            self.write(f"CONF:VOLT:DC {volt_range},{resolution},(@{str_channel})")
+
             # Set NPLC
             if nplc is not None:
                 ret_nplc = self.nplc(nplc, str_channel)
@@ -290,8 +296,7 @@ class Daq970a():
                 ret_nplc = self.nplc(None, str_channel)
                 list_nplc = [float(x.strip()) for x in ret_nplc.split(',')]
 
-            # Configure voltage DC measurement
-            self.write(f"CONF:VOLT:DC {volt_range},{resolution},(@{str_channel})")
+            self.write(f"ROUT:CHAN:DEL 0,(@{str_channel})")  # Channel delay 1ms
 
             # Configure trigger
             if tup_trig_tim_cnt is not None:
@@ -355,6 +360,10 @@ class Daq970a():
                     f"estimated measurement time ({estimated_time:.1f}s). "
                     f"Consider setting ms_timeout='AUTO'."
                 )
+
+
+            self.num_channels = int(self.query("ROUT:SCAN:SIZE?").rstrip())
+            self.num_triggers = int(float(self.query("TRIG:COUN?").rstrip()))
             self.check_errors()
 
             return list_conf, list_nplc, trig_source, trig_time, trig_count
@@ -398,7 +407,7 @@ class Daq970a():
             logger.error(f"{MSG} NPLC operation failed: {e}")
             raise DAQ970AError(f"NPLC operation failed: {e}")
 
-    def measure(self) -> Tuple[List[float], List[float]]:
+    def measure(self, sec_wait_between = 0.1) -> Tuple[List[float], List[float]]:
         """Perform measurement and return mean and standard deviation
 
         Returns:
@@ -407,15 +416,19 @@ class Daq970a():
         assert self.device is not None
 
         try:
-            num_channels = int(self.query("ROUT:SCAN:SIZE?").rstrip())
-            num_triggers = int(float(self.query("TRIG:COUN?").rstrip()))
+            # num_channels = int(self.query("ROUT:SCAN:SIZE?").rstrip())
+            # num_triggers = int(float(self.query("TRIG:COUN?").rstrip()))
 
             # Perform measurement
-            str_read = self.query("READ?")
+            # str_read = self.query("READ?", sec_wait_between)
+            self.write("INIT")
+            self.device.query("*OPC?")
+            str_read = self.query("FETC?")
+            self.check_errors()
             vec_read = np.array(str_read.split(","), dtype=float)
 
             # Reshape data: triggers x channels, then transpose to channels x triggers
-            mat_read = vec_read.reshape((num_triggers, num_channels)).T
+            mat_read = vec_read.reshape((self.num_triggers, self.num_channels)).T
 
             # Calculate statistics for each channel
             list_mean = []
@@ -547,6 +560,7 @@ def test_all_raw_data(name_daq):
 
 if __name__ == "__main__":
     name_daq = "USB0::0x2A8D::0x5101::MY58035013::INSTR"
+    # name_daq = None
     # Example usage - simple approach for tutorial/learning
     # The destructor will automatically clean up resources if an error occurs
     daq = Daq970a(name_daq)
@@ -557,5 +571,5 @@ if __name__ == "__main__":
     # Optional: Explicit cleanup (good practice for long-running applications)
     # daq.disconnect()
 
-    test_elapsed_time(name_daq)
+    # test_elapsed_time(name_daq)
     # test_all_raw_data(name_daq)
