@@ -190,7 +190,7 @@ class LK220():
 
             # if not info["warning"]:  # waring based
             #     break
-            if abs(_act - _set) < _window:  # temp based
+            if _act< _set + _window:  # temp based (fuzzy for cooling)
                 break
 
             sleep(sec_check_interval)
